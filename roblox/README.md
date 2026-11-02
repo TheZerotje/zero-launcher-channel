@@ -12,7 +12,16 @@ An original collect, upgrade, pet and rebirth simulator, built to be fun and to 
 | Pets | 6 eggs and 23 pets in 5 rarities. Equipped pets multiply your Coins and follow you around. |
 | Rebirth | Resets your Coins and upgrades. Gives +50% Coins forever, plus Gems. |
 | Gems | Earned from rebirths, daily rewards and codes. Spent on the Mythic Egg. |
-| Daily reward | Every 20 hours |
+| 7-day login streak | Rewards grow each day you come back. Missing more than 48h resets it. Day 7 gives a big prize. |
+| Daily quests | 3 random quests every day (collect orbs, hatch eggs, play 20 min...). Finishing all 3 gives a bonus spin. |
+| Playtime gifts | 9 free gifts unlock at 1, 3, 6, 10, 15, 20, 30, 45 and 60 minutes of playing |
+| Lucky Wheel | 1 free spin every 4 hours. Prizes include boosts, gems and a free Mythic Egg. Odds are shown. |
+| Power-ups | 2x Coins, Lucky (2x rare pets) and Super Magnet. Timers only tick while playing and stack up to 6h. |
+| Trails (skins) | 6 trails that everyone can see, each with a small coin bonus. 4 cost Gems, Rainbow is Robux only, Galaxy is Starter Pack only. |
+| Golden pets | Combine 5 of the same pet into a Golden one with 3x power |
+| Pet Index | +2% coins for each new pet species you discover |
+| Friend bonus | +10% coins per friend in the same server (up to +40%), so players invite friends |
+| "!" alerts | Red badges show when a gift, quest, spin or daily reward is ready |
 | Codes | `ZERO`, `LAUNCH`, `REALMS` (edit these in `Config.luau`) |
 | Global leaderboard | Shows the top rebirths on a board at spawn |
 | Saving | Uses DataStore, with autosave and save on shutdown |
@@ -28,6 +37,14 @@ An original collect, upgrade, pet and rebirth simulator, built to be fun and to 
 | Lucky Eggs (2x rare chance) | Game Pass | 299 R$ |
 | Coin Pouch / Coin Vault | Developer Product (can be bought again) | 25 / 199 R$ |
 | Gem Pile / Gem Chest | Developer Product | 99 / 499 R$ |
+| **Starter Pack** (1000 Gems, Galaxy Trail, 1h 2x Coins, 3 Spins) | Developer Product (shown until bought) | 99 R$. A cheap first buy turns players into buyers. |
+| 2x Coins Boost / Lucky Boost (30 min) | Developer Product | 49 / 79 R$ |
+| 5 Wheel Spins | Developer Product | 49 R$ |
+| Rainbow Trail | Developer Product | 149 R$ |
+
+**Roblox rules for random rewards:** Eggs and the Lucky Wheel show their odds in-game. Some countries
+don't allow random items bought with Robux, so the game uses PolicyService to hide paid spins and
+the Gem egg for players there. Read Roblox's monetization policies before you launch.
 
 Game Passes are bought once. Developer Products can be bought again and again, and that is where
 most simulator income comes from.

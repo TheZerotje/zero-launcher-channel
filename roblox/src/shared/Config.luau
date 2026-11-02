@@ -19,12 +19,17 @@ Config.GamePasses = {
 	LuckyHatch = { Id = 0, Name = "Lucky Eggs", Description = "Rare pets are 2x more likely." },
 }
 
--- Kind = "Coins" amounts scale with the player's rebirths (Amount * (1 + Rebirths)).
+-- Kind = "Coins" amounts scale with the player's progress (see Formulas.ScaledCoins).
 Config.Products = {
+	{ Key = "StarterPack", Id = 0, Name = "STARTER PACK", Kind = "Starter", Description = "1000 Gems + Galaxy Trail + 1h 2x Coins + 3 Spins. One time only!" },
 	{ Key = "CoinPouch", Id = 0, Name = "Coin Pouch", Kind = "Coins", Amount = 5000 },
 	{ Key = "CoinVault", Id = 0, Name = "Coin Vault", Kind = "Coins", Amount = 120000 },
 	{ Key = "GemPile", Id = 0, Name = "Gem Pile", Kind = "Gems", Amount = 300 },
 	{ Key = "GemChest", Id = 0, Name = "Gem Chest", Kind = "Gems", Amount = 2000 },
+	{ Key = "Boost2x", Id = 0, Name = "2x Coins Boost", Kind = "Boost", Boost = "Coins", Amount = 30 * 60, Description = "30 minutes of double coins" },
+	{ Key = "BoostLuck", Id = 0, Name = "Lucky Boost", Kind = "Boost", Boost = "Luck", Amount = 30 * 60, Description = "30 minutes of 2x rare pet chance" },
+	{ Key = "Spins5", Id = 0, Name = "5 Wheel Spins", Kind = "Spins", Amount = 5, Description = "5 extra Lucky Wheel spins" },
+	{ Key = "RainbowTrail", Id = 0, Name = "Rainbow Trail", Kind = "Trail", Trail = "Rainbow", Description = "Exclusive trail, +15% coins" },
 }
 
 ---------------------------------------------------------------------------
@@ -139,13 +144,101 @@ end
 -- REWARDS
 ---------------------------------------------------------------------------
 Config.DailyCooldown = 20 * 60 * 60
-Config.DailyGems = 25
-Config.DailyCoins = 1000 -- scaled by (1 + Rebirths)
 
 Config.Codes = {
 	ZERO = { Coins = 500 },
 	LAUNCH = { Gems = 50 },
 	REALMS = { Coins = 2500, Gems = 25 },
 } :: { [string]: { Coins: number?, Gems: number? } }
+
+---------------------------------------------------------------------------
+-- RETENTION & POWER-UPS
+---------------------------------------------------------------------------
+export type Reward = { Coins: number?, Gems: number?, Spins: number?, Boost: string?, Seconds: number?, Egg: string? }
+
+-- Timed power-ups. Time only ticks down while the player is in the game.
+Config.Boosts = {
+	Coins = { Name = "2x Coins", Description = "Double all coins", Duration = 15 * 60, GemCost = 75, Color = Color3.fromRGB(255, 196, 60) },
+	Luck = { Name = "Lucky", Description = "2x chance for rare pets", Duration = 15 * 60, GemCost = 100, Color = Color3.fromRGB(80, 230, 120) },
+	Magnet = { Name = "Super Magnet", Description = "+12 collect range", Duration = 15 * 60, GemCost = 50, Color = Color3.fromRGB(110, 170, 255) },
+}
+Config.BoostOrder = { "Coins", "Luck", "Magnet" }
+Config.MaxBoostTime = 6 * 60 * 60
+Config.MagnetBoostRange = 12
+
+-- Trails (skins). Bought with Gems, or with Robux via a Developer Product.
+export type TrailDef = { Key: string, Name: string, Color: ColorSequence, Bonus: number, GemCost: number?, ProductKey: string? }
+Config.Trails = {
+	{ Key = "Sparkle", Name = "Sparkle", Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 230, 120)), Bonus = 0.03, GemCost = 150 },
+	{ Key = "Ocean", Name = "Ocean", Color = ColorSequence.new(Color3.fromRGB(60, 200, 255), Color3.fromRGB(20, 60, 200)), Bonus = 0.05, GemCost = 400 },
+	{ Key = "Inferno", Name = "Inferno", Color = ColorSequence.new(Color3.fromRGB(255, 230, 60), Color3.fromRGB(255, 40, 20)), Bonus = 0.08, GemCost = 1000 },
+	{ Key = "Toxic", Name = "Toxic", Color = ColorSequence.new(Color3.fromRGB(180, 255, 60), Color3.fromRGB(30, 120, 30)), Bonus = 0.12, GemCost = 2500 },
+	{ Key = "Rainbow", Name = "Rainbow", Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 60, 60)),
+		ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 220, 60)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(60, 255, 120)),
+		ColorSequenceKeypoint.new(0.75, Color3.fromRGB(60, 140, 255)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 60, 255)),
+	}), Bonus = 0.15, ProductKey = "RainbowTrail" },
+	{ Key = "Galaxy", Name = "Galaxy", Color = ColorSequence.new(Color3.fromRGB(255, 120, 230), Color3.fromRGB(40, 0, 120)), Bonus = 0.2, ProductKey = "StarterPack" },
+} :: { TrailDef }
+
+-- 7-day login streak. Missing more than StreakGrace resets it to day 1.
+Config.StreakGrace = 48 * 60 * 60
+Config.StreakRewards = {
+	{ Gems = 10, Coins = 300 },
+	{ Gems = 15, Coins = 600 },
+	{ Gems = 20, Spins = 1 },
+	{ Gems = 30, Coins = 1500 },
+	{ Gems = 40, Boost = "Magnet", Seconds = 30 * 60 },
+	{ Gems = 60, Spins = 2 },
+	{ Gems = 150, Boost = "Coins", Seconds = 60 * 60 },
+} :: { Reward }
+
+-- Playtime gifts (reset every session). Keeps players in the game longer.
+Config.Gifts = {
+	{ Minutes = 1, Coins = 200 },
+	{ Minutes = 3, Gems = 10 },
+	{ Minutes = 6, Coins = 1000 },
+	{ Minutes = 10, Boost = "Magnet", Seconds = 10 * 60 },
+	{ Minutes = 15, Gems = 25 },
+	{ Minutes = 20, Spins = 1 },
+	{ Minutes = 30, Coins = 8000 },
+	{ Minutes = 45, Boost = "Coins", Seconds = 15 * 60 },
+	{ Minutes = 60, Gems = 100 },
+} :: { Reward & { Minutes: number } }
+
+-- Daily quests: QuestsPerDay random picks, reset at 00:00 UTC.
+Config.QuestsPerDay = 3
+Config.QuestTemplates = {
+	{ Kind = "Orbs", Text = "Collect %d orbs", Goal = 400, Gems = 25 },
+	{ Kind = "BigOrbs", Text = "Collect %d big orbs", Goal = 25, Gems = 25 },
+	{ Kind = "Hatch", Text = "Hatch %d eggs", Goal = 10, Gems = 30 },
+	{ Kind = "Upgrade", Text = "Buy %d upgrades", Goal = 10, Gems = 20 },
+	{ Kind = "Spin", Text = "Spin the Lucky Wheel %d time(s)", Goal = 1, Gems = 15 },
+	{ Kind = "Playtime", Text = "Play for %d minutes", Goal = 20, Gems = 30 },
+	{ Kind = "Golden", Text = "Make %d golden pet(s)", Goal = 1, Gems = 40 },
+}
+Config.QuestBonus = { Spins = 1, Gems = 25 } :: Reward -- for finishing all daily quests
+
+-- Lucky Wheel: one free spin every WheelCooldown, extra spins from gifts/streak/Robux.
+-- Odds are shown in-game (required by Roblox for paid random items).
+Config.WheelCooldown = 4 * 60 * 60
+Config.Wheel = {
+	{ Name = "Coin Stack", Weight = 35, Coins = 2000 },
+	{ Name = "Coin Mountain", Weight = 15, Coins = 10000 },
+	{ Name = "25 Gems", Weight = 22, Gems = 25 },
+	{ Name = "100 Gems", Weight = 6, Gems = 100 },
+	{ Name = "2x Coins 10m", Weight = 10, Boost = "Coins", Seconds = 600 },
+	{ Name = "Lucky 10m", Weight = 7, Boost = "Luck", Seconds = 600 },
+	{ Name = "Free Mythic Egg", Weight = 5, Egg = "Mythic" },
+} :: { Reward & { Name: string, Weight: number } }
+
+-- Long-term goals
+Config.GoldenCost = 5 -- combine 5 of the same pet...
+Config.GoldenMult = 3 -- ...into a golden one with 3x power
+Config.IndexBonus = 0.02 -- +2% coins for every pet species discovered
+Config.FriendBonus = 0.1 -- +10% coins per friend in the server
+Config.MaxFriendBonus = 4
 
 return Config

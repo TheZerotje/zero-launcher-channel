@@ -15,15 +15,17 @@ folder.Parent = Workspace
 type Follower = { Part: BasePart, Name: string }
 local followers: { [Player]: { Follower } } = {}
 
-local function makePet(name: string): BasePart
+local function makePet(rawName: string): BasePart
+	local golden = string.sub(rawName, -1) == "*"
+	local name = if golden then string.sub(rawName, 1, -2) else rawName
 	local def = Config.PetIndex[name]
-	local color = if def then Config.RarityColors[def.Rarity] else Color3.new(1, 1, 1)
+	local color = if golden then Color3.fromRGB(255, 200, 40) elseif def then Config.RarityColors[def.Rarity] else Color3.new(1, 1, 1)
 	local body = Instance.new("Part")
 	body.Name = name
 	body.Shape = Enum.PartType.Ball
-	body.Size = Vector3.new(2.4, 2.4, 2.4)
+	body.Size = if golden then Vector3.new(3, 3, 3) else Vector3.new(2.4, 2.4, 2.4)
 	body.Color = color
-	body.Material = if def and (def.Rarity == "Legendary" or def.Rarity == "Mythic") then Enum.Material.Neon else Enum.Material.SmoothPlastic
+	body.Material = if golden then Enum.Material.Foil elseif def and (def.Rarity == "Legendary" or def.Rarity == "Mythic") then Enum.Material.Neon else Enum.Material.SmoothPlastic
 	body.Anchored = true
 	body.CanCollide = false
 	body.CanQuery = false
@@ -46,7 +48,7 @@ local function makePet(name: string): BasePart
 		weld.Parent = eye
 		eye.Parent = body
 	end
-	if def and def.Rarity == "Mythic" then
+	if golden or (def and def.Rarity == "Mythic") then
 		local s = Instance.new("Sparkles")
 		s.Parent = body
 	end
@@ -61,7 +63,7 @@ local function makePet(name: string): BasePart
 	l.TextScaled = true
 	l.TextColor3 = color
 	l.TextStrokeTransparency = 0.3
-	l.Text = name
+	l.Text = (if golden then "Golden " else "") .. name
 	l.Parent = gui
 	gui.Parent = body
 	body.Parent = folder

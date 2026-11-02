@@ -11,7 +11,7 @@ local Config = require(game:GetService("ReplicatedStorage").Shared.Config)
 
 local DataService = {}
 
-export type Pet = { Id: string, N: string }
+export type Pet = { Id: string, N: string, G: boolean? }
 export type Profile = {
 	Coins: number,
 	Gems: number,
@@ -25,6 +25,15 @@ export type Profile = {
 	Codes: { [string]: boolean },
 	LastDaily: number,
 	Receipts: { string },
+	Streak: number,
+	Boosts: { Coins: number, Luck: number, Magnet: number },
+	Trails: { [string]: boolean },
+	Trail: string,
+	Spins: number,
+	LastFreeSpin: number,
+	Quests: { Day: number, List: { { T: number, P: number, C: boolean } }, Bonus: boolean },
+	Discovered: { [string]: boolean },
+	StarterPack: boolean,
 }
 
 local function defaultProfile(): Profile
@@ -41,6 +50,15 @@ local function defaultProfile(): Profile
 		Codes = {},
 		LastDaily = 0,
 		Receipts = {},
+		Streak = 0,
+		Boosts = { Coins = 0, Luck = 0, Magnet = 0 },
+		Trails = {},
+		Trail = "",
+		Spins = 1, -- new players get a free spin right away
+		LastFreeSpin = 0,
+		Quests = { Day = 0, List = {}, Bonus = false },
+		Discovered = {},
+		StarterPack = false,
 	}
 end
 
