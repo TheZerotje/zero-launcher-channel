@@ -26,6 +26,7 @@ const crash = require('../core/crash');
 const { DownloadStats } = require('../core/stats');
 const discord = require('../core/discord');
 const keybackup = require('../core/keybackup');
+const projects = require('../core/projects');
 const CHECK_ITEMS = ['starts', 'sound', 'tested', 'notes', 'picture'];
 const CHECK_LABELS = { starts: 'The game starts', sound: 'No sound bugs', tested: 'Tested by a tester', notes: "What's new is written", picture: 'Picture is set' };
 let stats = null;
@@ -126,8 +127,66 @@ function checkWeekNotice() {
   const s = readJson(file('settings.json'), {});
   const due = weekly.noticeDue(s.weekNotice);
   if (!due) return;
-  if (due.show) notify('Your new week plan is ready', 'Open "This week" in Zero Launcher to look at it.');
+  if (due.show) notify('Your new week plan is ready', 'Open "This week" in Zero Launcher. Your quick review is ready in My projects.');
   s.weekNotice = due.key; writeJson(file('settings.json'), s);
+}
+
+// ---- My projects (developer) ----
+function projectStore() {
+  const d = developer() || {};
+  return new projects.ProjectStore(file('projects.json'), {
+    hubSeed: readJson(path.join(__dirname, 'data', 'hub-seed.json'), { games: [] }),
+    projectsSeed: readJson(path.join(__dirname, 'data', 'projects-seed.json'), { projects: [] }),
+    hubProjects: (d.hub && d.hub.projects) || [],
+  });
+}
+function scanRoots() {
+  const d = developer() || {};
+  if (d.projects && Array.isArray(d.projects.scanRoots)) return d.projects.scanRoots.filter((r) => typeof r === 'string' && path.isAbsolute(r));
+  return process.platform === 'win32' ? ['E:\\', 'F:\\'] : [];
+}
+let lastProjects = null;
+function projectsView() {
+  const d = developer() || {};
+  const data = projectStore().load();
+  const site = gamehub.scanSite((d.hub || {}).siteDir); // READ ONLY
+  const ctx = { site, channel: catalogue };
+  const list = data.projects.map((p) => ({ ...p, status: projects.status(p, ctx) }));
+  const now = Date.now();
+  const weekKey = weekly.key(weekly.weekStart(new Date(now)));
+  const done = (data.reviews[weekKey] || {}).done || [];
+  const queueList = projects.reviewQueue(list, now, done).slice(0, Math.max(0, projects.REVIEW_MAX - done.length)); // max 10 per review
+  lastProjects = {
+    projects: list, dontForget: projects.forgotten(list, now), waiting: projects.waitingOnYou(list),
+    newFolders: projects.newFolders(scanRoots(), list, data.ignoredFolders),
+    scrapped: list.filter((p) => p.stage === 'scrapped').sort((a, b) => String(b.scrappedAt || '').localeCompare(String(a.scrappedAt || ''))),
+    review: { weekKey, doneCount: done.length, queue: queueList, due: done.length === 0 && queueList.length > 0 },
+    types: projects.TYPES, stages: projects.STAGES, waitingOn: projects.WAITING, scannedAt: new Date(now).toISOString(),
+    siteError: site.error || null,
+  };
+  return lastProjects;
+}
+function scrappedIds() {
+  try { return new Set(projectStore().load().projects.filter((p) => p.stage === 'scrapped').map((p) => p.id)); } catch { return new Set(); }
+}
+// The week plan only uses projects that may go on (never scrapped / on hold; after a review only "Keep going").
+function weekHub() {
+  const hub = api.devHub();
+  const list = projectStore().load().projects;
+  const allowed = projects.weekAllowed(list);
+  const skip = list.filter((p) => allowed.blocked.has(p.id)).flatMap((p) => [p.name, p.name.replace(/\s*\(.*\)$/, '')]);
+  return { ...hub, games: hub.games.filter((g) => !allowed.blocked.has(g.id)), skip };
+}
+// Once a day: "Don't forget" message (developer only, off switch in Settings).
+function checkProjectReminder() {
+  if (!developer() || settings().projectReminders === false) return;
+  const s = readJson(file('settings.json'), {});
+  let count = 0;
+  try { count = projects.forgotten(projectStore().load().projects.map((p) => ({ ...p, status: projects.status(p, {}) }))).length; } catch { return; }
+  const due = projects.reminderDue(s.projectReminderDay, count);
+  if (!due) return;
+  if (due.show) notify("Don't forget", `${count} project${count > 1 ? 's have' : ' has'} had no change for a while. Open My projects.`);
+  s.projectReminderDay = due.key; writeJson(file('settings.json'), s);
 }
 
 // Developer's Godot projects (from developer.json hub.projects) that the launcher may export.
@@ -165,6 +224,7 @@ function state() {
     : { games: Object.entries(inst).map(([id, i]) => ({ id, name: i.name || id, kind: 'pc', releases: [] })) };
   const updates = catalogue ? findUpdates(catalogue, inst, v).map((u) => u.game.id) : [];
   const d = developer();
+  const scrapped = d ? scrappedIds() : new Set();
   return {
     mode: mode(), viewer: v, siteUrl: d && d.website ? d.website.url : settings().siteUrl,
     settings: { ...settings() }, account: account() ? { name: account().name, id: account().id } : null,
@@ -179,6 +239,7 @@ function state() {
       current: currentRelease(g, v), releases: d ? g.releases : undefined,
       installed: inst[g.id] || null, updateReady: updates.includes(g.id),
       running: installer.isRunning(g.id), job: publicJob(queue.get(g.id)),
+      scrapped: d ? scrapped.has(g.id) : undefined,
     })),
     testers: d && catalogue ? catalogue.testers || [] : undefined,
     uploadNeeded: d ? uploadNeeded() : undefined,
@@ -341,7 +402,7 @@ const api = {
   },
   setLaunchArgs: (id, text) => { const r = installer.setLaunchArgs(id, text); send('state', state()); return r; },
   setSetting: (k, v) => {
-    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', startWithWindows: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'], speedLimit: [0, 1, 2, 5] };
+    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', startWithWindows: 'boolean', projectReminders: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'], speedLimit: [0, 1, 2, 5] };
     if (!ok[k]) throw new Error('Not allowed');
     if (Array.isArray(ok[k]) ? !ok[k].includes(v) : typeof v !== ok[k]) throw new Error('Not allowed');
     if (k === 'speedLimit') speedLimitMB = v;
@@ -363,6 +424,8 @@ const api = {
     const d = developer(); const hub = d.hub || {};
     const seed = readJson(path.join(__dirname, 'data', 'hub-seed.json'), { games: [] });
     const r = gamehub.build({ seed, marks: readJson(file('hub.json'), {}), siteDir: hub.siteDir, projects: hub.projects || [] });
+    const dead = scrappedIds(); // scrapped in My projects = scrapped here too
+    for (const g of r.games) if (dead.has(g.id)) { g.status = 'scrapped'; g.statusLabel = 'Scrapped'; g.statusSource = 'you'; }
     lastHub = r; return r;
   },
   devHubMark: (id, mark) => {
@@ -374,8 +437,8 @@ const api = {
   },
   devWeek: () => {
     const store = readJson(file('weekly.json'), {});
-    const hub = lastHub || api.devHub();
-    const r = weekly.current(store, hub, (developer().weekly || {}).focus);
+    const hub = weekHub();
+    const r = weekly.current(store, hub, (developer().weekly || {}).focus, new Date(), hub.skip);
     writeJson(file('weekly.json'), store); return r;
   },
   devWeekSave: (k, week) => {
@@ -388,13 +451,59 @@ const api = {
   devWeekResuggest: (k) => {
     const store = readJson(file('weekly.json'), {});
     if (!store.weeks || !store.weeks[k]) throw new Error('Unknown week');
-    const s = weekly.suggest(api.devHub(), (developer().weekly || {}).focus);
+    const wh = weekHub();
+    const s = weekly.suggest(wh, (developer().weekly || {}).focus, wh.skip);
     store.weeks[k] = { ...store.weeks[k], ...s, confirmed: false };
     writeJson(file('weekly.json'), store); return api.devWeek();
   },
   devOpenFolder: (folder) => {
-    if (!lastHub || !lastHub.games.some((g) => g.folder === folder)) throw new Error('Unknown folder');
+    const known = (lastHub && lastHub.games.some((g) => g.folder === folder)) || (lastProjects && lastProjects.projects.some((p) => p.folders.includes(folder)));
+    if (!known) throw new Error('Unknown folder');
     return shell.openPath(folder);
+  },
+  // ---- My projects ----
+  devProjects: () => projectsView(),
+  devProjectSave: (id, patch) => { projectStore().update(id, patch); return projectsView(); },
+  devProjectAdd: (o) => { const p = projectStore().add({ name: o.name, type: o.type || 'other', folders: o.folder ? [o.folder] : [] }); return { id: p.id, view: projectsView() }; },
+  devProjectScrap: async (id, reason) => {
+    const p = projectStore().load().projects.find((x) => x.id === id);
+    if (!p) throw new Error('Project not found');
+    const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Scrap it', 'Cancel'], defaultId: 1, cancelId: 1, message: `Scrap ${p.name}?`, detail: 'Are you sure? It will be hidden everywhere. No files are deleted.' });
+    if (r.response !== 0) return null;
+    projectStore().scrap(id, reason); send('state', state()); return projectsView();
+  },
+  // Only Zero brings a project back: a person must press "Bring back" and then say yes here.
+  devProjectBringBack: async (id) => {
+    const p = projectStore().load().projects.find((x) => x.id === id);
+    if (!p) throw new Error('Project not found');
+    const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['Bring back', 'Cancel'], defaultId: 1, cancelId: 1, message: `Bring ${p.name} back?`, detail: 'It shows up in your lists again.' });
+    if (r.response !== 0) return null;
+    projectStore().bringBack(id); send('state', state()); return projectsView();
+  },
+  devProjectIgnoreFolder: (dir) => { projectStore().ignoreFolder(dir); return projectsView(); },
+  devProjectArchive: async (id, folder) => {
+    const p = projectStore().load().projects.find((x) => x.id === id);
+    if (!p || !p.folders.includes(folder)) throw new Error('Unknown folder');
+    const def = process.platform === 'win32' ? 'E:\\Archive' : undefined;
+    const pick = await dialog.showOpenDialog(win, { title: 'Pick the archive folder (the original folder is kept)', defaultPath: def, properties: ['openDirectory', 'createDirectory'] });
+    if (pick.canceled || !pick.filePaths[0]) return null;
+    const zip = await projects.archiveFolder(folder, pick.filePaths[0], p.name);
+    projectStore().log(id, `Archive zip made: ${zip}`);
+    return zip;
+  },
+  devReviewChoice: (id, choice, reason) => {
+    const weekKey = weekly.key(weekly.weekStart(new Date()));
+    projectStore().review(id, choice, { reason, weekKey }); send('state', state()); return projectsView();
+  },
+  devStatusReport: () => projects.report(projectsView().projects),
+  devSaveReport: async (kind) => {
+    const rep = projects.report(projectsView().projects);
+    const ext = kind === 'html' ? 'html' : 'md';
+    const r = await dialog.showSaveDialog(win, { title: 'Save status report', defaultPath: `status-report-${rep.date}.${ext}`, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+    if (r.canceled || !r.filePath) return null;
+    if (!path.isAbsolute(r.filePath)) throw new Error('Pick a file');
+    writeFileAtomic(r.filePath, kind === 'html' ? rep.html : rep.markdown);
+    return r.filePath;
   },
   devAddGame: (g) => { devChannel().upsertGame({ id: g.id, name: g.name, kind: g.kind, url: g.url, image: g.image || '', description: g.description || '' }); return refresh(); },
   devAddVersion: async (o) => { const r = await devChannel().addPcRelease({ gameId: o.gameId, buildDir: o.buildDir, version: o.version, notes: o.notes || '' }); await refresh(); return r; },
@@ -546,7 +655,30 @@ const gid = ([id, ...rest]) => { V.gameId(id); if (rest.length) throw new Error(
 const gidVer = ([id, v, ...rest]) => { V.gameId(id); V.version(v); if (rest.length) throw new Error('Bad input'); };
 const AI_ID = /^\d{10,16}-\d{1,6}$/;
 const SUB_ID = /^[a-z0-9][a-z0-9-]{1,40}--[a-z0-9][a-z0-9-]{1,40}--v?[0-9A-Za-z.-]{1,40}$/;
+const pid = (x) => V.match(x, projects.ID_RE, 'project id');
+const absPath = (x, what = 'folder') => { if (typeof x !== 'string' || x.length > 1000 || !path.isAbsolute(x) || x.includes('\0')) throw new Error('Bad input: ' + what); return x; };
 const CHECKS = {
+  devProjects: none, devStatusReport: none,
+  devProjectSave: ([id, patch, ...rest]) => {
+    pid(id); V.obj(patch, 'project'); if (rest.length) throw new Error('Bad input');
+    const allowed = { name: 80, nextStep: 500, notes: 2000, repo: 200, needsWork: 200 };
+    for (const [k, v] of Object.entries(patch)) {
+      if (allowed[k]) V.str(v, k, allowed[k]);
+      else if (k === 'type') V.oneOf(v, Object.keys(projects.TYPES), 'type');
+      else if (k === 'stage') V.oneOf(v, Object.keys(projects.STAGES).filter((x) => x !== 'scrapped'), 'stage');
+      else if (k === 'waitingOn') V.oneOf(v, Object.keys(projects.WAITING), 'waiting on');
+      else if (k === 'priority') V.oneOf(v, [1, 2, 3], 'priority');
+      else if (k === 'folders') V.list(v, 'folders', 10).forEach((f) => absPath(f));
+      else throw new Error('Bad input: ' + k);
+    }
+  },
+  devProjectAdd: ([o, ...rest]) => { V.obj(o); if (rest.length) throw new Error('Bad input'); V.str(o.name, 'name', 80, { allowEmpty: false }); if (o.type !== undefined) V.oneOf(o.type, Object.keys(projects.TYPES), 'type'); if (o.folder !== undefined) V.dir(o.folder); },
+  devProjectScrap: ([id, reason, ...rest]) => { pid(id); V.str(reason, 'reason', 200, { allowEmpty: false }); if (rest.length) throw new Error('Bad input'); },
+  devProjectBringBack: ([id, ...rest]) => { pid(id); if (rest.length) throw new Error('Bad input'); },
+  devProjectIgnoreFolder: ([dir, ...rest]) => { absPath(dir); if (rest.length) throw new Error('Bad input'); },
+  devProjectArchive: ([id, folder, ...rest]) => { pid(id); absPath(folder); if (rest.length) throw new Error('Bad input'); },
+  devReviewChoice: ([id, choice, reason, ...rest]) => { pid(id); V.oneOf(choice, ['keep', 'pause', 'scrap', 'skip'], 'choice'); V.optStr(reason, 'reason', 200); if (rest.length) throw new Error('Bad input'); },
+  devSaveReport: ([kind, ...rest]) => { V.oneOf(kind, ['md', 'html'], 'report kind'); if (rest.length) throw new Error('Bad input'); },
   state: none, refresh: none, openArcade: none, devHub: none, devWeek: none, devPickFolder: none, devPickFile: none,
   devUpload: none, devGodotProjects: none, devWebsite: none, devFriends: none, devAiFolders: none, devAiHistory: none,
   devChatGPT: none, friendMakeKeys: none, friendPickFolder: none,
@@ -678,6 +810,8 @@ else {
     setInterval(refresh, CHECK_EVERY_MS);
     checkWeekNotice();
     setInterval(checkWeekNotice, 60 * 1000);
+    checkProjectReminder();
+    setInterval(checkProjectReminder, 60 * 60 * 1000);
     playFromArgs(process.argv);
     checkKeyBackup();
   });

@@ -138,3 +138,22 @@ details.gameinfo{margin-top:12px;padding-top:12px;border-top:1px dashed var(--li
 .pal-item.on,.pal-item:hover{background:var(--panel2)}
 .pal-kind{font-size:11px;font-weight:700;color:var(--dim);width:44px}
 td.dl{font-variant-numeric:tabular-nums}
+/* ---- My projects ---- */
+.pill.st-building{background:#f0a53033;color:var(--warn)}.pill.st-needs-playtest{background:#a66bff33;color:var(--test)}.pill.st-ready{background:#2fbf7133;color:var(--good)}
+.pill.st-released{background:#2fbf7122;color:#7fd8a6}.pill.st-idea,.pill.st-on-hold{background:#93a0b833;color:var(--dim)}.pill.st-unknown{background:#3d7dff33;color:#8fb3ff}.pill.st-scrapped{background:#ffffff11;color:#8a93a5}
+.k-pc{color:#7fb6ff}.k-roblox{color:#ff9a7f}.k-dnd{color:#c9a5ff}.k-ai{color:#7fffd0}.k-site{color:#ffd27f}
+.prio{font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--panel2)}.prio.p1{color:#ff8a8d}.prio.p2{color:var(--warn)}.prio.p3{color:var(--dim)}
+.wait{font-size:12px;color:#8fb3ff}
+.missing{color:#ff6b6e;font-weight:700}
+.pboxes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0}
+.pbox h3{margin:0 0 8px}.pbox.forget{border-color:#f0a53088}.pbox.waiting{border-color:#3d7dff88}
+.pline{padding:6px 0;border-top:1px solid var(--line)}.pline:first-of-type{border-top:0}.pline .days{color:var(--warn);font-weight:700}
+.clickable{cursor:pointer}
+.hub-row.flash{outline:2px solid var(--accent, #3d7dff)}
+.review-card{max-width:640px;margin:20px auto;text-align:center;padding:28px}
+.review-card h2{font-size:30px;margin:0 0 10px}.review-card .row{justify-content:center}
+.big-days{font-size:22px;font-weight:700;color:var(--warn)}
+.review-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px}.review-btns .btn{font-size:20px;padding:18px}
+.bad-text{color:var(--bad)}
+.report-frame{width:100%;height:70vh;border:1px solid var(--line);border-radius:12px;background:#fff}
+.hub-row.grave{opacity:.9}

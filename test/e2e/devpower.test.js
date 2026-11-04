@@ -1,5 +1,5 @@
 'use strict';
-// Developer power: Godot export, Upload needed badge, My games extras, AI helper past jobs.
+// Developer power: Godot export, Upload needed badge, My projects extras, AI helper past jobs.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -32,7 +32,7 @@ test('Publish: Upload needed badge, Export from Godot adds an UNRELEASED version
   } finally { await close(app); }
 });
 
-test('My games: git commits, last build size, Copy path; AI helper past jobs', async () => {
+test('My projects: git commits, last build size, Copy path; AI helper past jobs', async () => {
   const demo = makeDemo();
   const proj = path.join(demo.dir, 'projects', 'Dustrunner');
   const g = (...a) => execFileSync('git', ['-C', proj, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { stdio: 'ignore' });
@@ -44,7 +44,7 @@ test('My games: git commits, last build size, Copy path; AI helper past jobs', a
   fs.writeFileSync(path.join(runs, 'output.jsonl'), JSON.stringify({ type: 'result', subtype: 'success', result: 'Jump fixed' }) + '\n');
   const { app, win, errors } = await launch(demo.dev);
   try {
-    await goto(win, 'My games');
+    await goto(win, 'My projects');
     const row = win.locator('.hub-row', { hasText: 'Railrove' }).first();
     await row.waitFor();
     await row.locator('summary', { hasText: 'Git: last 1 commits' }).click();
@@ -71,7 +71,7 @@ test('keyboard: Ctrl+1..9 pages for the developer, Ctrl+F search', async () => {
     await win.keyboard.press('Control+3');
     await win.locator('h1', { hasText: 'Publish' }).waitFor();
     await win.keyboard.press('Control+1');
-    await win.locator('h1', { hasText: 'My games' }).waitFor();
+    await win.locator('h1', { hasText: 'My projects' }).waitFor();
     await win.locator('#hub-q').waitFor();
     await win.locator('body').click({ position: { x: 600, y: 20 } });
     await win.keyboard.press('Control+f');

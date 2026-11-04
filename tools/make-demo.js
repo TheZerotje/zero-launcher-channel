@@ -48,10 +48,14 @@ const { FriendInbox, makeSubmission } = require('../core/friends');
   const fakeGodot = path.join(root, 'tools', 'fake-godot.sh');
   fs.mkdirSync(path.dirname(fakeGodot), { recursive: true });
   fs.writeFileSync(fakeGodot, '#!/bin/sh\nfor a; do out="$a"; done\necho "fake godot: export to $out"\nprintf \'#!/bin/sh\\nsleep 1\\n\' > "$out"\nmkdir -p "$(dirname "$out")" && echo pck > "$(dirname "$out")/game.pck"\n', { mode: 0o755 });
+  // a fake "E:\\" drive for "New folder found" (only its top folders are read)
+  const driveE = path.join(root, 'drive-e');
+  for (const n of ['New Space Game', '$RECYCLE.BIN', 'System Volume Information', 'Old Stuff']) fs.mkdirSync(path.join(driveE, n), { recursive: true });
   fs.writeFileSync(path.join(dev, 'developer.json'), JSON.stringify({
     channelDir: chDir, privateKeyFile: path.join(root, 'zero-private.pem'), publisher: 'Zero', godotPath: fakeGodot,
     website: { url: 'http://127.0.0.1:4599/', autoStart: false },
     friendsDir: path.join(dev, 'friends'), aiFolders: [{ name: 'Railrove', path: proj }],
+    projects: { scanRoots: [driveE, path.join(root, 'projects')] },
     hub: { siteDir: site, projects: [{ id: 'railrove', name: 'Railrove', path: proj }, { id: 'marchlands', name: 'Marchlands', path: path.join(root, 'projects', 'Marchlands') }] },
   }, null, 2));
   for (const d of [dev, player, user]) fs.writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ publicKeyFile: path.join(root, 'zero-public.pem'), channelUrl: chDir, siteUrl: 'http://127.0.0.1:4599/' }));

@@ -4,11 +4,9 @@
 let S = null;        // last state from the app
 let page = null;
 let gameId = null;   // open game page
-let hubFilter = { q: '', status: 'all' };
 let storeFilter = { q: '', kind: 'all' };
 let showOldNews = false;
 let libFilter = { q: '', sort: 'played' };
-let hubData = null;
 let weekData = null;
 const aiLog = [];    // lines for the AI helper
 let aiJob = null;
@@ -71,7 +69,7 @@ function applyLook() {
 // ---------------- navigation ----------------
 function pages() {
   const p = [['store', t('Store')], ['library', t('Library')], ['arcade', t("Zero's Arcade")], ['settings', t('Settings')], ['help', t('Help')]];
-  const dev = S.mode === 'developer' ? [['dev-hub', 'My games'], ['dev-week', 'This week'], ['dev-publish', 'Publish'], ['dev-testers', 'Testers'], ['dev-friends', 'Friend games'], ['dev-ai', 'AI helper'], ['dev-host', 'Website & host']] : [];
+  const dev = S.mode === 'developer' ? [['dev-hub', 'My projects'], ['dev-week', 'This week'], ['dev-publish', 'Publish'], ['dev-testers', 'Testers'], ['dev-friends', 'Friend games'], ['dev-ai', 'AI helper'], ['dev-host', 'Website & host']] : [];
   const fr = S.friendHost ? [['friend', 'Send my game']] : [];
   return { p, dev, fr };
 }
@@ -233,16 +231,17 @@ document.addEventListener('keydown', (e) => {
 // ---------------- pages ----------------
 const P = {};
 P.store = () => {
+  const G = S.games.filter((g) => !g.scrapped); // scrapped in My projects: hidden from the Store (developer)
   const kinds = [['all', t('All')], ['pc', t('PC games')], ['web', t('Play instantly')], ['installed', t('Installed')]];
-  const list = S.games.filter((g) => matches(g, storeFilter.q) && (storeFilter.kind === 'all'
+  const list = G.filter((g) => matches(g, storeFilter.q) && (storeFilter.kind === 'all'
     || (storeFilter.kind === 'installed' ? !!g.installed : g.kind === storeFilter.kind)));
   const web = list.filter((g) => g.kind === 'web'), pc = list.filter((g) => g.kind === 'pc');
   const now = Date.now();
   const recent = (iso, days) => iso && now - Date.parse(iso) < days * DAY;
   const browsing = !storeFilter.q && storeFilter.kind === 'all';
-  const fresh = browsing ? S.games.filter((g) => recent(g.addedAt, 30) && !isComingSoon(g)) : [];
-  const updated = browsing ? S.games.filter((g) => !fresh.includes(g) && g.kind === 'pc' && recent(g.updatedAt, 14)) : [];
-  const soon = browsing ? S.games.filter(isComingSoon).sort((a, b) => a.comingSoon.localeCompare(b.comingSoon)) : [];
+  const fresh = browsing ? G.filter((g) => recent(g.addedAt, 30) && !isComingSoon(g)) : [];
+  const updated = browsing ? G.filter((g) => !fresh.includes(g) && g.kind === 'pc' && recent(g.updatedAt, 14)) : [];
+  const soon = browsing ? G.filter(isComingSoon).sort((a, b) => a.comingSoon.localeCompare(b.comingSoon)) : [];
   const section = (title, games, cls) => (games.length ? [h('h3', { class: 'section ' + cls }, title), h('div', { class: 'grid' }, games.map(card))] : null);
   return [
     h('h1', {}, t('Store')), h('p', { class: 'sub' }, t("All of Zero's games. Website games play right away, PC games install.")),
@@ -259,8 +258,8 @@ P.store = () => {
     browsing && (fresh.length || updated.length || soon.length) ? h('h2', { class: 'all-games' }, t('All games')) : null,
     pc.filter((g) => !isComingSoon(g)).length ? [h('h3', {}, t('PC games')), h('div', { class: 'grid' }, pc.filter((g) => !isComingSoon(g)).map(card))] : null,
     web.length ? [h('h3', { style: 'margin-top:26px' }, t('Website games')), h('div', { class: 'grid' }, web.map(card))] : null,
-    !S.games.length && !S.error ? h('div', { class: 'empty' }, t('No games yet. Check back soon!')) : null,
-    S.games.length && !list.length ? h('div', { class: 'empty' }, t('No game found. Try another word.')) : null,
+    !G.length && !S.error ? h('div', { class: 'empty' }, t('No games yet. Check back soon!')) : null,
+    G.length && !list.length ? h('div', { class: 'empty' }, t('No game found. Try another word.')) : null,
   ];
 };
 P.library = () => {
@@ -375,61 +374,179 @@ P.help = () => [h('h1', {}, t('Help')), h('p', { class: 'sub' }, t('Short answer
 
 // ---- developer ----
 
-const STATUS_LIST = [['needs-work', 'Needs work'], ['ready', 'Ready for your OK'], ['testing', 'Needs your playtest'], ['coming-soon', 'Coming soon'], ['building', 'In development'], ['idea', 'Idea'], ['on-hold', 'On hold'], ['released', 'Released'], ['scrapped', 'Scrapped']];
-const SRC = { you: 'you set this', pc: 'checked on your PC', notes: 'from project notes' };
-const KIND = { web: 'Website', godot: 'Godot', unity: 'Unity', unreal: 'Unreal', pc: 'PC' };
-function hubRow(g) {
+// ---- My projects (developer): every project, exact status, don't forget, scrap, quick review, report ----
+let projData = null;
+let projFilter = { q: '', type: '', stage: '', waitingOn: '', priority: '', showReleased: false };
+let reviewAt = 0;
+const SRC_NOTE = (p) => (p.history.length ? 'you set this' : 'from project notes');
+const daysTxt = (iso) => { if (!iso) return 'never'; const d = Math.floor((Date.now() - Date.parse(iso)) / 86400000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
+const loadProjects = async () => { projData = await call('devProjects'); render(); };
+function projVisible() {
+  const f = projFilter; const q = f.q.toLowerCase();
+  return projData.projects.filter((p) => p.stage !== 'scrapped'
+    && (f.stage ? p.stage === f.stage : (p.stage !== 'released' || p.needsWork || f.showReleased))
+    && (!f.type || p.type === f.type) && (!f.waitingOn || p.waitingOn === f.waitingOn) && (!f.priority || p.priority === Number(f.priority))
+    && (!q || [p.name, p.id, p.nextStep, p.notes, p.repo, ...p.folders].join(' ').toLowerCase().includes(q)));
+}
+function scrapProject(p) {
+  const input = h('input', { id: 'scrap-reason', placeholder: 'example: not fun anymore', maxlength: 200, style: 'width:100%' });
+  modal(`Scrap ${p.name}?`, h('div', {}, h('p', {}, 'Why? One line is enough. No files are deleted.'), input), [
+    ['Cancel', 'ghost', () => true],
+    ['Next', 'btn bad', async () => {
+      const reason = $('#scrap-reason').value.trim();
+      if (!reason) { toast('Write one line first', 'error'); return false; }
+      const r = await call('devProjectScrap', p.id, reason);
+      if (r) { projData = r; render(); toast(`${p.name} is scrapped. It is hidden everywhere.`); }
+    }]]);
+}
+function projectRow(p) {
+  const st = p.status; const fx = st.facts;
+  const v = (k) => fx[k] && fx[k].value;
+  const src = (k) => (fx[k] ? h('span', { class: 'src', title: fx[k].source }, fx[k].source) : null);
+  const D = projData;
   const edit = h('div', { class: 'hub-edit', style: 'display:none' },
     h('div', { class: 'form' },
-      h('label', {}, 'Status', h('select', { class: 'e-status' }, h('option', { value: '' }, '(automatic)'), STATUS_LIST.filter(([k]) => k !== 'needs-work').map(([k, l]) => h('option', { value: k, selected: g.facts.status && g.facts.status.source === 'you' && g.status === k }, l)))),
-      h('label', {}, 'Next step', h('input', { class: 'e-next', value: g.nextStep || '', placeholder: 'example: add sound to menu' }))),
+      h('label', {}, 'Stage', h('select', { class: 'e-stage' }, Object.entries(D.stages).filter(([k]) => k !== 'scrapped').map(([k, l]) => h('option', { value: k, selected: p.stage === k }, l)))),
+      h('label', {}, 'Type', h('select', { class: 'e-type' }, Object.entries(D.types).map(([k, l]) => h('option', { value: k, selected: p.type === k }, l)))),
+      h('label', {}, 'Waiting on', h('select', { class: 'e-wait' }, Object.entries(D.waitingOn).map(([k, l]) => h('option', { value: k, selected: p.waitingOn === k }, l)))),
+      h('label', {}, 'Priority', h('select', { class: 'e-prio' }, [1, 2, 3].map((n) => h('option', { value: n, selected: p.priority === n }, String(n))))),
+      h('label', {}, 'Next step', h('input', { class: 'e-next', value: p.nextStep || '', placeholder: 'example: add sound to menu' })),
+      h('label', {}, 'Notes', h('input', { class: 'e-notes', value: p.notes || '' }))),
     h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: async (e) => {
       const box = e.target.closest('.hub-edit');
-      hubData = await call('devHubMark', g.id, { status: box.querySelector('.e-status').value, nextStep: box.querySelector('.e-next').value.trim() }); render();
-    } }, 'Save')));
-  return h('div', { class: 'hub-row' },
+      projData = await call('devProjectSave', p.id, { stage: box.querySelector('.e-stage').value, type: box.querySelector('.e-type').value, waitingOn: box.querySelector('.e-wait').value,
+        priority: Number(box.querySelector('.e-prio').value), nextStep: box.querySelector('.e-next').value.trim(), notes: box.querySelector('.e-notes').value.trim() });
+      render(); toast('Saved');
+    } }, 'Save'),
+    h('button', { class: 'ghost small bad-text', onclick: () => scrapProject(p) }, 'Scrap project')));
+  const folder = (st.folders.find((f) => f.found) || {}).dir || p.folders[0]; // the first folder that is on this PC
+  return h('div', { class: 'hub-row', 'data-id': p.id },
     h('div', { class: 'hub-main' },
-      h('div', { class: 'row' }, h('b', { class: 'hub-name' }, g.name), h('span', { class: 'kind k-' + g.kind }, KIND[g.kind] || g.kind), g.version ? h('span', { class: 'dim' }, g.version) : null),
+      h('div', { class: 'row' }, h('b', { class: 'hub-name' }, p.name), h('span', { class: 'kind k-' + p.type }, D.types[p.type]), h('span', { class: 'prio p' + p.priority, title: 'Priority' }, 'P' + p.priority),
+        v('version') ? h('span', { class: 'dim', title: fx.version.source }, v('version')) : null),
       h('div', { class: 'row', style: 'margin-top:4px' },
-        h('span', { class: 'pill s-' + g.status }, g.statusLabel), h('span', { class: 'src' }, SRC[g.statusSource] || ''),
-        g.changedAgo ? h('span', { class: 'dim' }, '· last worked on ' + g.changedAgo) : null),
-      g.nextStep ? h('div', { class: 'next' }, 'Next: ', g.nextStep) : null,
-      g.warnings.length ? h('div', { class: 'warn' }, '⚠ ' + g.warnings.join(' · ')) : null,
-      g.thread ? h('div', { class: 'dim' }, 'Chat: ' + g.thread) : null,
-      g.lastBuild ? h('div', { class: 'dim' }, `Last build: ${mb(g.lastBuild.size)} · ${new Date(g.lastBuild.at).toLocaleDateString()}`) : null,
-      g.git ? h('details', { class: 'git' }, h('summary', {}, `Git: ${g.git.commits.length ? 'last ' + g.git.commits.length + ' commits' : 'no commits'}${g.git.dirty ? ' · changes not committed' : ''}`),
-        g.git.commits.map((c) => h('div', { class: 'commit' }, h('span', { class: 'dim' }, new Date(c.date).toLocaleDateString() + ' '), c.message))) : null,
+        h('span', { class: 'pill st-' + p.stage }, D.stages[p.stage]), h('span', { class: 'src' }, SRC_NOTE(p)),
+        p.waitingOn !== 'nobody' ? h('span', { class: 'wait' }, 'Waiting on: ' + D.waitingOn[p.waitingOn]) : null,
+        h('span', { class: 'dim', title: st.lastChangeSource || '' }, '· last change ' + daysTxt(st.lastChange)), st.lastChangeSource ? h('span', { class: 'src' }, st.lastChangeSource) : null),
+      p.nextStep ? h('div', { class: 'next' }, 'Next: ', p.nextStep) : null,
+      p.needsWork ? h('div', { class: 'warn' }, '⚠ Needs work: ' + p.needsWork) : null,
+      st.warnings.length ? h('div', { class: 'warn' }, st.warnings.map((w) => h('div', { class: /^Folder not found/.test(w) ? 'missing' : '' }, '⚠ ' + w))) : null,
+      v('siteState') ? h('div', { class: 'dim' }, 'Website: ' + v('siteState') + ' ', src('siteState')) : null,
+      v('channel') ? h('div', { class: 'dim' }, 'Launcher: ' + Object.entries(v('channel')).map(([s, vs]) => `${s} ${vs.join(', ')}`).join(' · ') + ' ', src('channel')) : null,
+      v('lastBuild') ? h('div', { class: 'dim' }, `Last build: ${mb(v('lastBuild').size)} · ${new Date(v('lastBuild').at).toLocaleDateString()} `, src('lastBuild')) : null,
+      v('robloxFile') ? h('div', { class: 'dim' }, `Roblox file: ${v('robloxFile').file} · ${new Date(v('robloxFile').date).toLocaleDateString()}`) : null,
+      v('git') ? h('details', { class: 'git' }, h('summary', {}, `Git: ${v('git').commits.length ? 'last ' + v('git').commits.length + ' commits' : 'no commits'}${v('git').dirty ? ' · changes not committed' : ''}`),
+        v('git').commits.map((c) => h('div', { class: 'commit' }, h('span', { class: 'dim' }, new Date(c.date).toLocaleDateString() + ' '), c.message))) : null,
+      p.repo ? h('div', { class: 'dim' }, 'Repo: ' + p.repo) : null,
+      p.notes ? h('div', { class: 'dim' }, p.notes) : null,
       edit),
     h('div', { class: 'hub-side' },
-      g.folder ? h('button', { class: 'ghost small', title: g.folder, onclick: () => call('devOpenFolder', g.folder) }, 'Open folder') : h('span', { class: 'dim' }, 'no folder'),
-      g.folder ? h('span', { class: 'path' }, g.folder) : null,
-      g.folder ? h('button', { class: 'ghost small', onclick: () => call('copy', g.folder).then(() => toast('Path copied')) }, 'Copy path') : null,
+      folder ? h('button', { class: 'ghost small', title: folder, onclick: () => call('devOpenFolder', folder) }, 'Open folder') : h('span', { class: 'dim' }, 'no folder'),
+      p.folders.map((f) => h('span', { class: 'path' }, f)),
+      folder ? h('button', { class: 'ghost small', onclick: () => call('copy', folder).then(() => toast('Path copied')) }, 'Copy path') : null,
       h('div', { class: 'row' },
         h('button', { class: 'ghost small', onclick: (e) => { const x = e.target.closest('.hub-row').querySelector('.hub-edit'); x.style.display = x.style.display === 'none' ? 'block' : 'none'; } }, 'Edit'),
-        (g.status === 'released' || g.status === 'needs-work') ? h('button', { class: 'ghost small', onclick: async () => {
-          hubData = await call('devHubMark', g.id, { needsWork: g.status === 'needs-work' ? '' : 'needs work' }); render();
-        } }, g.status === 'needs-work' ? 'Mark fixed' : 'Needs work') : null)));
+        p.stage === 'released' ? h('button', { class: 'ghost small', onclick: async () => { projData = await call('devProjectSave', p.id, { needsWork: p.needsWork ? '' : 'needs work' }); render(); } }, p.needsWork ? 'Mark fixed' : 'Needs work') : null)));
 }
+function projBox(title, cls, items, empty, line) {
+  return h('div', { class: 'panel pbox ' + cls }, h('h3', {}, `${title} (${items.length})`), items.length ? items.slice(0, 8).map(line) : h('div', { class: 'dim' }, empty),
+    items.length > 8 ? h('div', { class: 'dim' }, `and ${items.length - 8} more`) : null);
+}
+const jumpTo = (id) => { projFilter = { ...projFilter, q: '', stage: '', type: '', waitingOn: '', priority: '', showReleased: true }; render(); setTimeout(() => { const r = document.querySelector(`.hub-row[data-id="${id}"]`); if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('flash'); } }, 50); };
 P['dev-hub'] = () => {
-  if (!hubData) { call('devHub').then((r) => { hubData = r; render(); }).catch(() => {}); return [h('h1', {}, 'My games'), h('p', { class: 'dim loading' }, 'Checking your folders…')]; }
-  const q = hubFilter.q.toLowerCase();
-  const games = hubData.games.filter((g) => (!q || (g.name + ' ' + g.id + ' ' + (g.folder || '') + ' ' + (g.nextStep || '')).toLowerCase().includes(q)) && (hubFilter.status === 'all' || g.status === hubFilter.status));
-  const count = (k) => hubData.games.filter((g) => g.status === k).length;
-  const chips = h('div', { class: 'row chips' }, h('button', { class: 'chip' + (hubFilter.status === 'all' ? ' on' : ''), onclick: () => { hubFilter.status = 'all'; render(); } }, `All ${hubData.games.length}`),
-    STATUS_LIST.filter(([k]) => count(k)).map(([k, l]) => h('button', { class: 'chip s-' + k + (hubFilter.status === k ? ' on' : ''), onclick: () => { hubFilter.status = k; render(); } }, `${l} ${count(k)}`)));
-  const folded = new Set(['released', 'scrapped']);
-  const groups = STATUS_LIST.map(([k, l]) => [k, l, games.filter((g) => g.status === k)]).filter(([, , list]) => list.length);
-  const search = h('input', { id: 'hub-q', class: 'search', placeholder: 'Search a game, folder or next step…', value: hubFilter.q, style: 'width:100%;font-size:16px;padding:12px 14px',
-    oninput: (e) => { hubFilter.q = e.target.value; render(); const i = $('#hub-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
-  return [h('div', { class: 'row', style: 'justify-content:space-between' }, h('h1', {}, 'My games'),
-      h('button', { class: 'ghost', onclick: async () => { hubData = await call('devHub'); render(); toast('Folders checked again'); } }, 'Check again')),
-    h('p', { class: 'sub' }, `Checked ${new Date(hubData.scannedAt).toLocaleTimeString()}. Each status says where it comes from. Released games are folded away unless they need work.`),
-    hubData.site.error ? h('div', { class: 'err' }, hubData.site.error + ': ' + (hubData.site.folder || '')) : null,
-    search, chips,
-    groups.map(([k, l, list]) => folded.has(k) && hubFilter.status !== k && !q
-      ? h('details', { class: 'hub-group' }, h('summary', {}, `${l} (${list.length})`), list.map(hubRow))
-      : h('div', { class: 'hub-group' }, h('h3', {}, `${l} (${list.length})`), list.map(hubRow))),
-    !games.length ? h('div', { class: 'empty' }, 'No game matches.') : null];
+  if (!projData) { loadProjects().catch(() => {}); return [h('h1', {}, 'My projects'), h('p', { class: 'dim loading' }, 'Checking your folders…')]; }
+  const D = projData; const list = projVisible();
+  const sel = (key, label, opts) => h('select', { class: 'pf-' + key, onchange: (e) => { projFilter[key] = e.target.value; render(); } },
+    h('option', { value: '' }, label), Object.entries(opts).map(([k, l]) => h('option', { value: k, selected: String(projFilter[key]) === String(k) }, l)));
+  const search = h('input', { id: 'hub-q', class: 'search', placeholder: 'Search a project, folder or next step…', value: projFilter.q, style: 'width:100%;font-size:16px;padding:12px 14px',
+    oninput: (e) => { projFilter.q = e.target.value; render(); const i = $('#hub-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
+  const groups = Object.entries(D.stages).map(([k, l]) => [k, l, list.filter((p) => p.stage === k)]).filter(([, , ps]) => ps.length);
+  return [h('div', { class: 'row', style: 'justify-content:space-between' }, h('h1', {}, 'My projects'),
+      h('div', { class: 'row' },
+        h('button', { class: 'ghost', onclick: () => { reviewAt = 0; go('dev-review'); } }, 'Quick review'),
+        h('button', { class: 'ghost', onclick: () => { reportData = null; go('dev-report'); } }, 'Make status report'),
+        h('button', { class: 'ghost', onclick: () => go('dev-graveyard') }, `Scrapped (${D.scrapped.length})`),
+        h('button', { class: 'ghost', onclick: async () => { await loadProjects(); toast('Folders checked again'); } }, 'Check again'))),
+    h('p', { class: 'sub' }, `Checked ${new Date(D.scannedAt).toLocaleTimeString()}. Every value says where it comes from. Released and scrapped projects are hidden unless you ask.`),
+    D.review.due ? h('div', { class: 'hero' }, h('div', {}, h('h2', {}, 'Quick review'), h('div', { class: 'dim' }, `${D.review.queue.length} projects, one at a time. Keep going, pause, scrap or skip.`)),
+      h('button', { class: 'btn', onclick: () => { reviewAt = 0; go('dev-review'); } }, 'Start review')) : null,
+    D.siteError ? h('div', { class: 'err' }, D.siteError) : null,
+    h('div', { class: 'pboxes' },
+      projBox("Don't forget", 'forget', D.dontForget, 'Nothing forgotten. Nice!', (x) => h('div', { class: 'pline clickable', onclick: () => jumpTo(x.id) }, h('b', {}, x.name), h('span', { class: 'days' }, ` ${x.days} days`), x.nextStep ? h('div', { class: 'dim' }, 'Next: ' + x.nextStep) : null)),
+      projBox('Waiting on you', 'waiting', D.waiting, 'Nothing waits on you.', (x) => h('div', { class: 'pline clickable', onclick: () => jumpTo(x.id) }, h('b', {}, x.name), x.nextStep ? h('div', { class: 'dim' }, x.nextStep) : null)),
+      projBox('New folder found', 'newf', D.newFolders, 'No new folders on E:\\ or F:\\.', (x) => h('div', { class: 'pline' }, h('b', {}, x.name), h('div', { class: 'dim path' }, x.path),
+        h('div', { class: 'row' },
+          h('button', { class: 'ghost small', onclick: async () => { const r = await call('devProjectAdd', { name: x.name, type: 'other', folder: x.path }); projData = r.view; render(); toast('Added. Press Edit to set the type and stage.'); } }, 'Add as project'),
+          h('button', { class: 'ghost small', onclick: async () => { projData = await call('devProjectIgnoreFolder', x.path); render(); } }, 'Ignore forever'))))),
+    search,
+    h('div', { class: 'row tools' }, sel('type', 'All types', D.types), sel('stage', 'All stages', Object.fromEntries(Object.entries(D.stages).filter(([k]) => k !== 'scrapped'))),
+      sel('waitingOn', 'Waiting on anyone', D.waitingOn), sel('priority', 'Any priority', { 1: 'Priority 1', 2: 'Priority 2', 3: 'Priority 3' }),
+      h('label', { class: 'row' }, h('input', { type: 'checkbox', checked: projFilter.showReleased, onchange: (e) => { projFilter.showReleased = e.target.checked; render(); } }), 'Show released'),
+      h('button', { class: 'ghost small', onclick: () => {
+        const input = h('input', { id: 'new-proj', placeholder: 'Project name', maxlength: 80, style: 'width:100%' });
+        modal('New project', input, [['Cancel', 'ghost', () => true], ['Add', 'btn', async () => {
+          const name = $('#new-proj').value.trim(); if (!name) return false;
+          const r = await call('devProjectAdd', { name, type: 'other' }); projData = r.view; closeModal(); render(); jumpTo(r.id);
+        }]]);
+      } }, '+ New project')),
+    groups.map(([k, l, ps]) => h('div', { class: 'hub-group' }, h('h3', {}, `${l} (${ps.length})`), ps.map(projectRow))),
+    !list.length ? h('div', { class: 'empty' }, 'No project matches.') : null];
+};
+
+// Quick review: one project at a time, 4 big buttons. Most forgotten first, max 10.
+P['dev-review'] = () => {
+  if (!projData) { loadProjects().catch(() => {}); return [h('h1', {}, 'Quick review'), h('p', { class: 'dim loading' }, 'Loading…')]; }
+  const q = projData.review.queue;
+  const back = h('button', { class: 'ghost', onclick: () => go('dev-hub') }, '← My projects');
+  if (!q.length) return [h('h1', {}, 'Quick review'), h('div', { class: 'hero' }, h('div', {}, h('h2', {}, 'All done!'), h('div', { class: 'dim' }, 'Your week plan uses the projects you keep going.'))), back];
+  const p = q[0];
+  const choose = async (choice, reason) => { projData = await call('devReviewChoice', p.id, choice, reason || ''); reviewAt++; render(); };
+  return [h('div', { class: 'row', style: 'justify-content:space-between' }, h('h1', {}, 'Quick review'), h('span', { class: 'dim review-count' }, `${projData.review.doneCount + 1} of ${projData.review.doneCount + q.length}`)),
+    h('div', { class: 'panel review-card' },
+      h('h2', {}, p.name), h('div', { class: 'row' }, h('span', { class: 'pill st-' + p.stage }, p.stageLabel), h('span', { class: 'kind' }, p.type), h('span', { class: 'prio p' + p.priority }, 'P' + p.priority)),
+      h('p', { class: 'big-days' }, p.days ? `No change for ${p.days} days` : 'Changed today'),
+      p.nextStep ? h('p', {}, 'Next: ' + p.nextStep) : null, p.notes ? h('p', { class: 'dim' }, p.notes) : null,
+      h('div', { class: 'review-btns' },
+        h('button', { class: 'btn big good', onclick: () => choose('keep') }, 'Keep going'),
+        h('button', { class: 'btn big', onclick: () => choose('pause') }, 'Pause'),
+        h('button', { class: 'btn big bad', onclick: () => {
+          const input = h('input', { id: 'scrap-reason', placeholder: 'example: not fun anymore', maxlength: 200, style: 'width:100%' });
+          modal(`Scrap ${p.name}?`, h('div', {}, h('p', {}, 'Why? One line is enough. No files are deleted.'), input), [['Cancel', 'ghost', () => true], ['Scrap it', 'btn bad', async () => {
+            const reason = $('#scrap-reason').value.trim(); if (!reason) { toast('Write one line first', 'error'); return false; }
+            closeModal(); await choose('scrap', reason);
+          }]]);
+        } }, 'Scrap'),
+        h('button', { class: 'btn big ghost', onclick: () => choose('skip') }, 'Skip'))),
+    back];
+};
+
+// Graveyard: scrapped projects with reason + date. Only Zero presses "Bring back".
+P['dev-graveyard'] = () => {
+  if (!projData) { loadProjects().catch(() => {}); return [h('h1', {}, 'Scrapped'), h('p', { class: 'dim loading' }, 'Loading…')]; }
+  const list = projData.scrapped;
+  return [h('div', { class: 'row', style: 'justify-content:space-between' }, h('h1', {}, 'Scrapped'), h('button', { class: 'ghost', onclick: () => go('dev-hub') }, '← My projects')),
+    h('p', { class: 'sub' }, 'Hidden everywhere. No files were deleted. Change the website yourself if it still shows a game.'),
+    list.length ? list.map((p) => h('div', { class: 'hub-row grave', 'data-id': p.id },
+      h('div', { class: 'hub-main' }, h('b', { class: 'hub-name' }, p.name), h('div', { class: 'dim' }, `Scrapped${p.scrappedAt ? ' ' + new Date(p.scrappedAt).toLocaleDateString() : ''}: ${p.scrapReason || ''}`),
+        p.status.warnings.filter((w) => /^Scrapped/.test(w)).map((w) => h('div', { class: 'warn' }, '⚠ ' + w))),
+      h('div', { class: 'hub-side' },
+        p.folders.filter((f) => !p.status.warnings.includes('Folder not found: ' + f)).map((f) => h('button', { class: 'ghost small', title: f, onclick: async () => { const z = await call('devProjectArchive', p.id, f); if (z) toast('Archive zip made: ' + z); } }, 'Pack folder into an archive zip')),
+        h('button', { class: 'ghost small', onclick: async () => { const r = await call('devProjectBringBack', p.id); if (r) { projData = r; render(); toast(`${p.name} is back`); } } }, 'Bring back'))))
+      : h('div', { class: 'empty' }, 'Nothing scrapped.')];
+};
+
+// Status report: one page, Markdown copy button, optional save.
+let reportData = null;
+P['dev-report'] = () => {
+  if (!reportData) { call('devStatusReport').then((r) => { reportData = r; render(); }).catch(() => {}); return [h('h1', {}, 'Status report'), h('p', { class: 'dim loading' }, 'Making it…')]; }
+  const frame = h('iframe', { class: 'report-frame', sandbox: '', srcdoc: reportData.html, title: 'Status report' });
+  return [h('div', { class: 'row', style: 'justify-content:space-between' }, h('h1', {}, 'Status report'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', onclick: async () => { await call('copy', reportData.markdown); toast('Markdown copied'); } }, 'Copy as Markdown'),
+        h('button', { class: 'ghost', onclick: async () => { const f = await call('devSaveReport', 'html'); if (f) toast('Saved: ' + f); } }, 'Save as HTML'),
+        h('button', { class: 'ghost', onclick: async () => { const f = await call('devSaveReport', 'md'); if (f) toast('Saved: ' + f); } }, 'Save as Markdown'),
+        h('button', { class: 'ghost', onclick: () => { reportData = null; go('dev-hub'); } }, '← My projects'))),
+    frame];
 };
 
 P['dev-week'] = () => {
@@ -536,7 +653,7 @@ P['dev-publish'] = () => {
       h('div', { class: 'row dim' }, dlData && dlData.at ? `Download numbers from GitHub, ${new Date(dlData.at).toLocaleTimeString()}${dlData.error ? ' · ' + dlData.error : ''}` : 'Getting download numbers…',
         h('button', { class: 'ghost small', onclick: async () => { dlData = await call('devDownloads', true); render(); } }, 'Refresh numbers'))),
     pc.map((g) => h('div', { class: 'panel' },
-      h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', { style: 'margin:0' }, g.name, g.owner && g.owner !== 'zero' ? h('span', { class: 'dim' }, '  by ' + g.owner) : null),
+      h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', { style: 'margin:0' }, g.name, g.owner && g.owner !== 'zero' ? h('span', { class: 'dim' }, '  by ' + g.owner) : null, g.scrapped ? h('span', { class: 'pill st-scrapped', title: 'Scrapped in My projects. Hidden from your Store. Players still get it until you press Go back.' }, 'Scrapped') : null),
         h('div', { class: 'row' }, h('button', { class: 'ghost small', onclick: () => call('devGoBack', g.id).then(set) }, 'Go back to previous version'),
           h('button', { class: 'ghost small', onclick: () => call('devHide', g.id, !g.hidden).then(set) }, g.hidden ? 'Show in store' : 'Hide from store'))),
       h('table', {}, h('tr', {}, ['Version', 'State', "What's new", 'Size', 'Downloads', ''].map((t) => h('th', {}, t))),
@@ -692,7 +809,8 @@ function render() {
   applyLook();
   const { p, dev, fr } = pages();
   if (!page) page = S.mode === 'developer' ? 'dev-hub' : 'store';
-  if (![...p, ...dev, ...fr].some(([id]) => id === page)) page = 'store';
+  const sub = dev.length ? ['dev-review', 'dev-graveyard', 'dev-report'] : []; // pages opened from My projects
+  if (![...p, ...dev, ...fr].some(([id]) => id === page) && !sub.includes(page)) page = 'store';
   renderNav();
   const keepScroll = $('#main').scrollTop;
   const m = $('#main'); m.innerHTML = '';

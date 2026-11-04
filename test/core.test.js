@@ -825,6 +825,7 @@ test('projects: scrap hides everywhere, needs a reason, never deletes files; onl
   const allowed = P.weekAllowed(d.projects);
   const plan = weekly.suggest({ games: hub.games.filter((g) => !allowed.blocked.has(g.id)) }, []);
   assert.ok(!JSON.stringify(plan).includes('Alpha'), 'never in This week');
+  assert.ok(!JSON.stringify(weekly.suggest({ games: [] }, ['Alpha', 'Gamma'], ['Alpha'])).includes('Alpha'), 'a focus on a scrapped project is left out');
   assert.throws(() => store.update('alpha', { stage: 'building' }), /Bring it back first/);
   assert.throws(() => store.update('beta', { stage: 'scrapped' }), /Scrap project/);
   // scrapped launcher game: warning (website state is only read, never changed)

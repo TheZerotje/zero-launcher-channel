@@ -56,19 +56,18 @@ function seedList({ hubSeed = { games: [] }, projectsSeed = { projects: [] }, hu
       folders: g.folder ? [g.folder] : [], nextStep: g.nextStep || '', priority: 2, created: asOf,
       waitingOn: g.status === 'ready' || g.status === 'testing' ? 'zero' : 'nobody',
       notes: [g.version ? `Version ${g.version}.` : '', g.status === 'coming-soon' ? 'Coming soon on the website.' : '', g.flag || ''].filter(Boolean).join(' '),
-      ...(g.status === 'scrapped' ? { scrapReason: 'Scrapped before 2 Nov 2026 (from project notes)', scrappedAt: asOf } : {}),
+      ...(g.status === 'scrapped' ? { scrapReason: 'Scrapped before 2 Nov 2026 (from project notes)' } : {}), // no date: not "this week"
     });
   }
   for (const p of projectsSeed.projects || []) {
     const old = by.get(p.id) || {};
     by.set(p.id, { ...old, ...p, folders: [...new Set([...(p.folders || []), ...(old.folders || [])])], created: asOf,
       notes: [old.notes, p.notes].filter(Boolean).join(' ') });
-    if (p.stage === 'scrapped' && !by.get(p.id).scrappedAt) by.get(p.id).scrappedAt = asOf;
   }
   for (const hp of hubProjects || []) {
     const id = hp.id || slug(hp.name);
     const old = by.get(id) || { id, name: hp.name, type: 'pc', stage: 'building', created: asOf };
-    by.set(id, { ...old, folders: [...new Set([...(old.folders || []), hp.path])] });
+    by.set(id, { ...old, folders: [...new Set([hp.path, ...(old.folders || [])])] }); // developer.json = this PC: first
   }
   return [...by.values()].map((p) => clean(p, now));
 }
@@ -144,6 +143,10 @@ class ProjectStore {
       delete p.scrapReason; delete p.scrappedAt; delete p.prevStage; delete p.review;
       p.lastTouched = iso; p.history.push({ date: iso, what: 'Brought back by Zero' });
     }, now);
+  }
+  // Add a line to the history (works for scrapped projects too; changes nothing else).
+  log(id, what, now = Date.now()) {
+    return this._edit(id, (p) => { p.history.push({ date: new Date(now).toISOString(), what: String(what).slice(0, 300) }); }, now);
   }
   ignoreFolder(dir) {
     const d = this.load();

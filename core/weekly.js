@@ -14,13 +14,16 @@ function weekStart(now = new Date()) {
 }
 const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-function suggest(hub, focus = DEFAULT_FOCUS) {
+function suggest(hub, focus = DEFAULT_FOCUS, skip = []) {
+  // skip: names of scrapped / paused projects. A focus that points at one of them is left out.
+  const skipped = (f) => skip.some((n) => { const a = String(n).toLowerCase(), b = String(f).toLowerCase(); return a && (a.includes(b) || b.includes(a)); });
   const games = (hub && hub.games) || [];
   const by = (s) => games.filter((g) => g.status === s);
   const find = (re) => games.find((g) => re.test(g.name) || re.test(g.id));
   const goals = [];
   const todos = [];
   for (const f of focus) {
+    if (skipped(f)) continue;
     if (/new web game/i.test(f)) {
       const next = by('ready')[0] || by('testing')[0];
       goals.push({ text: next ? `Get 1 web game out: ${next.name}` : 'Pick and start 1 new web game', gameId: next && next.id });
@@ -40,10 +43,10 @@ function suggest(hub, focus = DEFAULT_FOCUS) {
 }
 
 // Get this week's plan, making a suggestion if there is none yet.
-function current(store, hub, focus, now = new Date()) {
+function current(store, hub, focus, now = new Date(), skip = []) {
   const k = key(weekStart(now));
   store.weeks = store.weeks || {};
-  if (!store.weeks[k]) store.weeks[k] = { start: k, confirmed: false, madeAt: now.toISOString(), ...suggest(hub, focus) };
+  if (!store.weeks[k]) store.weeks[k] = { start: k, confirmed: false, madeAt: now.toISOString(), ...suggest(hub, focus, skip) };
   const end = weekStart(now); end.setDate(end.getDate() + 7);
   return { key: k, nextPlan: end.toISOString(), week: store.weeks[k], history: Object.keys(store.weeks).filter((x) => x !== k).sort().reverse().slice(0, 8).map((x) => {
     const w = store.weeks[x]; const all = [...w.goals, ...w.todos];

@@ -131,3 +131,35 @@ Zero was asleep. When something was unclear I picked the safest simple option an
 45. **CI runs once per push, not twice.** Before, every push to the PR branch started two CI runs (push + pull
     request), so Zero got two "failed" emails for one problem. Now push runs only on main, and the pull request run
     tests the overnight branch. A "Run workflow" button (workflow_dispatch) is there for a manual run.
+
+## Part 3 (My projects)
+
+46. **One list, one file.** projects.json (app data, atomic writes) holds every project, games included. First run it is
+    seeded from hub-seed.json (games) + projects-seed.json (other projects) + the folders in developer.json
+    (hub.projects; this PC's folder is listed first). "My games" is now "My projects" (same place in the menu, Ctrl+1).
+    The old hub (hub.json) still feeds "This week", but scrapped projects show as scrapped there too.
+47. **Stages** are: Unknown – check, Idea, Building, Needs playtest, Ready for your OK, Released, On hold, Scrapped.
+    Game statuses map like this: testing -> Needs playtest, coming soon -> Ready for your OK (note added),
+    needs work -> Released + "Needs work". Games that wait for your playtest or OK start as "Waiting on: You".
+48. **Last change** = newest of: a file in the project folder, the newest git commit, your own last edit in the
+    launcher. "Don't forget" counts days from that. Seed projects with no folder count from the seed date (2 Nov 2026).
+49. **Scrap** needs a one-line reason in the app, then a Windows confirm box ("Are you sure? It will be hidden
+    everywhere. No files are deleted."). A normal edit can never set or remove "scrapped" (checked in the app AND in
+    the main process). **Bring back** also needs a Windows confirm box, so only a person can do it.
+50. **Scrapped launcher game**: hidden from YOUR Store and marked "Scrapped" on Publish. Players are NOT changed by
+    this (that would mean changing the channel). The project shows: "players can still get it. Press Go back on
+    Publish if you want it gone for them." The website is never changed; you get "remember to also hide it on the
+    website" when releases.json still shows it.
+51. **Projects scrapped before 2 Nov** have no scrap date, so they never count as "scrapped this week".
+52. **Quick review**: max 10 per week (the count does not grow while you go). The list starts with the projects with
+    the longest time since the last change. "Keep going" also moves On hold / Unknown to Building. Once you pressed
+    "Keep going" for at least one project, the week plan only uses "Keep going" projects; before your first review it
+    uses everything that is not scrapped or on hold. A focus in developer.json that names a scrapped/paused project
+    is left out of the plan.
+53. **New folder found** reads only the top folder names of E:\ and F:\ (on Windows; developer.json
+    projects.scanRoots can change this). Skipped: names starting with $ or ., system folders (Windows, Program Files,
+    System Volume Information, Recovery, ...), Archive, folders already in a project, and folders that hold a project.
+54. **Archive zip** goes to a folder you pick (it starts at E:\Archive), named <project>-<date>.zip. It refuses a
+    target inside the project folder, writes to a .part file first, and never touches the original folder.
+55. **Daily "Don't forget" message**: once per day, only when something is in the box. Off switch in Settings
+    (developer only, "projectReminders").
