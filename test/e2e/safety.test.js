@@ -32,7 +32,7 @@ test('web game windows: sandboxed, no node, no preload; outside links go to the 
   const { app, win } = await launch(demo.user);
   try {
     await app.evaluate(({ shell }) => { global.opened = []; shell.openExternal = async (u) => { global.opened.push(u); }; });
-    await win.locator('.card', { hasText: 'Pop Storm' }).locator('button', { hasText: 'Play' }).click();
+    await win.locator('.card', { hasText: 'Pop Storm' }).locator('button', { hasText: 'Play' }).first().click();
     await win.waitForTimeout(1500);
     const prefs = await app.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows().find((x) => x.getTitle() !== 'Zero Launcher');

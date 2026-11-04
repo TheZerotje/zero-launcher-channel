@@ -10,7 +10,7 @@ test('store search and filters, library sort', async () => {
   const demo = makeDemo();
   const { app, win, errors } = await launch(demo.user);
   try {
-    await win.locator('.card', { hasText: 'Railrove' }).waitFor();
+    await win.locator('.card', { hasText: 'Railrove' }).first().waitFor();
     await win.fill('#store-q', 'pop');
     await win.waitForTimeout(200);
     assert.equal(await win.locator('.card').count(), 1);
@@ -69,7 +69,7 @@ test('tester gets one message for a new test version; switch turns messages off'
   const demo = makeDemo();
   let { app, win } = await launch(demo.player);
   try {
-    await win.locator('.card', { hasText: 'Railrove' }).waitFor();
+    await win.locator('.card', { hasText: 'Railrove' }).first().waitFor();
     await win.waitForTimeout(300);
     let notices = await app.evaluate(() => global.zlNotices);
     assert.equal(notices.filter((n) => n.title === 'New test version').length, 1);
@@ -88,7 +88,7 @@ test('report a problem makes a file with the game info', async () => {
   const demo = makeDemo();
   const { app, win } = await launch(demo.user);
   try {
-    await win.locator('.card b', { hasText: 'Railrove' }).click();
+    await win.locator('.card b', { hasText: 'Railrove' }).first().click();
     await win.fill('#rep-text', 'The train fell off the map');
     await win.locator('button', { hasText: 'Make report' }).click();
     await win.locator('.toast', { hasText: 'Report saved' }).waitFor();
