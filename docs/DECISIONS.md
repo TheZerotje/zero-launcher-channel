@@ -128,3 +128,6 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     never removes games) during an update or a silent uninstall. "Yes" removes only the launcher's own game folder
     (%APPDATA%\Zero Launcher\library); games moved to another folder stay. The script is build/installer.nsh; the
     Windows CI build checks that it compiles.
+45. **CI runs once per push, not twice.** Before, every push to the PR branch started two CI runs (push + pull
+    request), so Zero got two "failed" emails for one problem. Now push runs only on main, and the pull request run
+    tests the overnight branch. A "Run workflow" button (workflow_dispatch) is there for a manual run.

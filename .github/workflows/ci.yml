@@ -3,8 +3,11 @@
 name: CI
 
 on:
+  # Push runs only on main; the PR run covers the overnight branch. One run per push = one email, not two.
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
