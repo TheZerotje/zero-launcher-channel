@@ -8,12 +8,13 @@ const { FriendInbox, makeSubmission } = require('../core/friends');
   const root = path.resolve(process.argv[2] || 'demo');
   fs.rmSync(root, { recursive: true, force: true });
   const k = generateKeyPair();
-  const dev = path.join(root, 'dev'), player = path.join(root, 'player'), chDir = path.join(root, 'channel');
-  fs.mkdirSync(dev, { recursive: true }); fs.mkdirSync(player, { recursive: true });
+  // dev = Zero (developer), player = Sam (tester for Railrove), user = a normal player (no account).
+  const dev = path.join(root, 'dev'), player = path.join(root, 'player'), user = path.join(root, 'user'), chDir = path.join(root, 'channel');
+  for (const d of [dev, player, user]) fs.mkdirSync(d, { recursive: true });
   fs.writeFileSync(path.join(root, 'zero-private.pem'), k.privateKey);
   fs.writeFileSync(path.join(root, 'zero-public.pem'), k.publicKey);
   const ch = new Channel(chDir, k.privateKey);
-  const build = (label, n) => { const d = path.join(root, 'builds', label); fs.mkdirSync(path.join(d, 'data'), { recursive: true }); fs.writeFileSync(path.join(d, 'Game.exe'), label); fs.writeFileSync(path.join(d, 'data', 'game.pck'), Buffer.alloc(n, 1)); return d; };
+  const build = (label, n) => { const d = path.join(root, 'builds', label); fs.mkdirSync(path.join(d, 'data'), { recursive: true }); fs.writeFileSync(path.join(d, 'Game.exe'), `#!/bin/sh\n# fake game ${label}\nsleep 1\n`); fs.writeFileSync(path.join(d, 'data', 'game.pck'), Buffer.alloc(n, 1)); return d; };
   ch.upsertGame({ id: 'railrove', name: 'Railrove', kind: 'pc', description: 'Build a moving train base and cross a wild world.' });
   ch.upsertGame({ id: 'marchlands', name: 'Marchlands', kind: 'pc', description: 'Lead a medieval warband across the marches.' });
   ch.upsertGame({ id: 'pop-storm', name: 'Pop Storm', kind: 'web', url: 'http://127.0.0.1:4599/', description: 'Pop bubbles, chain storms.' });
@@ -48,6 +49,7 @@ const { FriendInbox, makeSubmission } = require('../core/friends');
     friendsDir: path.join(dev, 'friends'), aiFolders: [{ name: 'Railrove', path: proj }],
     hub: { siteDir: site, projects: [{ id: 'railrove', name: 'Railrove', path: proj }, { id: 'marchlands', name: 'Marchlands', path: path.join(root, 'projects', 'Marchlands') }] },
   }, null, 2));
-  for (const d of [dev, player]) fs.writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ publicKeyFile: path.join(root, 'zero-public.pem'), channelUrl: chDir, siteUrl: 'http://127.0.0.1:4599/' }));
+  for (const d of [dev, player, user]) fs.writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ publicKeyFile: path.join(root, 'zero-public.pem'), channelUrl: chDir, siteUrl: 'http://127.0.0.1:4599/' }));
+  // The build folders stay in demo/builds so tests can add new versions from them.
   console.log(root, sam.id);
 })();

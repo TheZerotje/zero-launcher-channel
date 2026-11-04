@@ -5,6 +5,7 @@
   "main": "app/main.js",
   "scripts": {
     "test": "node --test test/core.test.js",
+    "test:e2e": "node --test --test-concurrency=1 \"test/e2e/*.test.js\"",
     "start": "electron .",
     "dist": "electron-builder --win nsis --x64 --publish never"
   },
@@ -17,7 +18,8 @@
   },
   "devDependencies": {
     "electron": "^38.8.6",
-    "electron-builder": "^26.18.0"
+    "electron-builder": "^26.18.0",
+    "playwright": "1.63.0"
   },
   "productName": "Zero Launcher",
   "build": {
