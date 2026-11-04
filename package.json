@@ -1,0 +1,48 @@
+{
+  "name": "zero-launcher",
+  "version": "0.1.0",
+  "description": "Zero Launcher",
+  "main": "app/main.js",
+  "scripts": {
+    "test": "node --test test/core.test.js",
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "yauzl": "^3.4.0",
+    "yazl": "^2.5.1"
+  },
+  "devDependencies": {
+    "electron": "^38.8.6",
+    "electron-builder": "^26.18.0"
+  },
+  "productName": "Zero Launcher",
+  "build": {
+    "appId": "com.zero.launcher",
+    "productName": "Zero Launcher",
+    "files": [
+      "app/**",
+      "core/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "ZeroLauncherSetup-${version}.${ext}"
+    },
+    "publish": null
+  }
+}

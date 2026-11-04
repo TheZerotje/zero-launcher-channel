@@ -1,0 +1,25 @@
+{
+  "channelDir": "E:\\ZeroLauncher\\channel",
+  "privateKeyFile": "C:\\Users\\zerok\\AppData\\Roaming\\Zero Launcher\\zero-private.pem",
+  "publisher": "Zero",
+  "github": { "repo": "TheZerotje/zero-launcher-channel", "token": "PUT-TOKEN-HERE-ON-THE-PC-ONLY" },
+  "website": { "url": "http://127.0.0.1:4173/", "command": "", "args": [], "cwd": "E:\\GameLauncher", "autoStart": false },
+  "friendsDir": "E:\\ZeroLauncher\\friends",
+  "aiFolders": [
+    { "name": "Railrove", "path": "E:\\Dustrunner" },
+    { "name": "Marchlands", "path": "E:\\Marchlands" },
+    { "name": "Kindlewood", "path": "E:\\Kindlewood" },
+    { "name": "Zero Launcher", "path": "E:\\ZeroLauncher" }
+  ],
+  "hub": {
+    "siteDir": "E:\\GameLauncher",
+    "projects": [
+      { "id": "railrove", "name": "Railrove", "path": "E:\\Dustrunner" },
+      { "id": "marchlands", "name": "Marchlands", "path": "E:\\Marchlands" },
+      { "id": "kindlewood", "name": "Kindlewood", "path": "E:\\Kindlewood" },
+      { "id": "railfront", "name": "Railfront", "path": "E:\\Railfront" },
+      { "id": "world-engine", "name": "D&D World Engine", "path": "E:\\WorldEngine" }
+    ]
+  },
+  "weekly": { "focus": ["1 new web game per week", "Railrove", "D&D World Engine"] }
+}

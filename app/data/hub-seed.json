@@ -1,0 +1,345 @@
+{
+ "asOf": "2026-11-02",
+ "source": "Project notes from all Claude chats",
+ "games": [
+  {
+   "id": "pop-storm",
+   "name": "Pop Storm",
+   "kind": "web",
+   "status": "released"
+  },
+  {
+   "id": "slide-splat",
+   "name": "Slide Splat",
+   "kind": "web",
+   "status": "released"
+  },
+  {
+   "id": "rush-hour",
+   "name": "Rush Hour",
+   "kind": "web",
+   "status": "released"
+  },
+  {
+   "id": "sugar-swap",
+   "name": "Sugar Swap",
+   "kind": "web",
+   "status": "released"
+  },
+  {
+   "id": "knock-out",
+   "name": "Knock Out",
+   "kind": "web",
+   "status": "released"
+  },
+  {
+   "id": "where-on-earth",
+   "name": "Where on Earth",
+   "kind": "web",
+   "status": "released"
+  },
+  {
+   "id": "cogspire",
+   "name": "Cogspire",
+   "kind": "web",
+   "status": "released",
+   "version": "v19"
+  },
+  {
+   "id": "bannerbound",
+   "name": "Bannerbound",
+   "kind": "web",
+   "status": "building",
+   "version": "v21",
+   "thread": "Build 2v2 online card battler",
+   "nextStep": "Check: site shows it RELEASED since 1 Nov, not set by Claude. Is that right?",
+   "flag": "Site state unclear"
+  },
+  {
+   "id": "nova-forge",
+   "name": "Nova Forge",
+   "kind": "web",
+   "status": "ready",
+   "nextStep": "Waits for your Release press"
+  },
+  {
+   "id": "pocket-banner-brigade",
+   "name": "Pocket Banner Brigade",
+   "kind": "web",
+   "status": "ready",
+   "nextStep": "Waits for your Release press"
+  },
+  {
+   "id": "cat-nap",
+   "name": "Cat Nap",
+   "kind": "web",
+   "status": "ready",
+   "nextStep": "Waits for your Release press"
+  },
+  {
+   "id": "glide-garden",
+   "name": "Glide Garden",
+   "kind": "web",
+   "status": "ready",
+   "nextStep": "Waits for your Release press"
+  },
+  {
+   "id": "loop-luxe",
+   "name": "Loop Luxe",
+   "kind": "web",
+   "status": "ready",
+   "nextStep": "Waits for your Release press"
+  },
+  {
+   "id": "quiz-current",
+   "name": "Quiz Current",
+   "kind": "web",
+   "status": "ready",
+   "nextStep": "Waits for your Release press"
+  },
+  {
+   "id": "block-burst",
+   "name": "Block Burst",
+   "kind": "web",
+   "status": "ready",
+   "nextStep": "Waits for your Release press",
+   "version": "v2"
+  },
+  {
+   "id": "hero-forge-2",
+   "name": "Hero Forge 2",
+   "kind": "web",
+   "status": "coming-soon",
+   "version": "hf2-20",
+   "thread": "Build D&D DM and player screens",
+   "nextStep": "Coming soon, goes live 2 Nov 13:19 UTC unless you set it back"
+  },
+  {
+   "id": "skin-market",
+   "name": "Skin Market",
+   "kind": "web",
+   "status": "building",
+   "version": "v3"
+  },
+  {
+   "id": "crown-horde",
+   "name": "Crown & Horde",
+   "kind": "web",
+   "status": "building",
+   "version": "v10",
+   "note": "PC only"
+  },
+  {
+   "id": "gunpowder-gambit",
+   "name": "Gunpowder Gambit",
+   "kind": "web",
+   "status": "building"
+  },
+  {
+   "id": "shapefront",
+   "name": "Shapefront",
+   "kind": "web",
+   "status": "building",
+   "nextStep": "Tips 2-5 + big battles being built"
+  },
+  {
+   "id": "melon-jar",
+   "name": "Melon Jar",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Fixed, needs your playtest"
+  },
+  {
+   "id": "skyhold",
+   "name": "Skyhold",
+   "kind": "web",
+   "status": "testing",
+   "version": "v4"
+  },
+  {
+   "id": "lantern-drop",
+   "name": "Lantern Drop",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "tram-dash",
+   "name": "Tram Dash",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "mens-erger-je-niet",
+   "name": "Ludo",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "wordshow",
+   "name": "Wordshow",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "bassline",
+   "name": "Bassline",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "storm-garden",
+   "name": "Storm Garden",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "hop-hop-highway",
+   "name": "Hop Hop",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "sudoku",
+   "name": "Sudoku",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "kruiswoord",
+   "name": "Crossword",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "woordzoeker",
+   "name": "Word Search",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "prismfall",
+   "name": "Prismfall",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "inkognito",
+   "name": "Ink Rush",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "deadzone-haven",
+   "name": "Deadzone Haven",
+   "kind": "web",
+   "status": "testing",
+   "nextStep": "Unreleased: needs your playtest"
+  },
+  {
+   "id": "party-night",
+   "name": "Party Night",
+   "kind": "web",
+   "status": "on-hold"
+  },
+  {
+   "id": "dust-off",
+   "name": "Dust Off",
+   "kind": "web",
+   "status": "building",
+   "nextStep": "Being redone in 3D"
+  },
+  {
+   "id": "cryptogram",
+   "name": "Cryptogram",
+   "kind": "web",
+   "status": "scrapped",
+   "note": "Scrapped, never revive"
+  },
+  {
+   "id": "mall-ien-empire",
+   "name": "Mall-ien Empire",
+   "kind": "web",
+   "status": "scrapped",
+   "note": "Scrapped, never revive"
+  },
+  {
+   "id": "glowcube-gardens",
+   "name": "Glowcube Gardens",
+   "kind": "web",
+   "status": "scrapped",
+   "note": "Scrapped, never revive"
+  },
+  {
+   "id": "junkyard-jingles",
+   "name": "Junkyard Jingles",
+   "kind": "web",
+   "status": "scrapped",
+   "note": "Scrapped, never revive"
+  },
+  {
+   "id": "railrove",
+   "name": "Railrove",
+   "kind": "godot",
+   "status": "on-hold",
+   "folder": "E:\\Dustrunner",
+   "version": "0.19.12.0",
+   "thread": "Build Dustrunner train-base game",
+   "nextStep": "Paused until Fri 6 Nov. Next big patch = world building"
+  },
+  {
+   "id": "marchlands",
+   "name": "Marchlands",
+   "kind": "godot",
+   "status": "building",
+   "folder": "E:\\Marchlands",
+   "version": "0.4.4.0",
+   "thread": "Build own top-down warband strategy game with Codex",
+   "nextStep": "Codex: clash (04G), then banners + items, towns, kingdoms"
+  },
+  {
+   "id": "kindlewood",
+   "name": "Kindlewood",
+   "kind": "godot",
+   "status": "building",
+   "folder": "E:\\Kindlewood",
+   "version": "M3"
+  },
+  {
+   "id": "tidekeeper",
+   "name": "Tidekeeper",
+   "kind": "godot",
+   "status": "testing",
+   "version": "v0.1.1",
+   "nextStep": "Waits on your playtest"
+  },
+  {
+   "id": "railfront",
+   "name": "Railfront",
+   "kind": "godot",
+   "status": "testing",
+   "folder": "E:\\Railfront",
+   "version": "0.06 / Alt 0.6",
+   "nextStep": "Waits on your playtest"
+  },
+  {
+   "id": "world-engine",
+   "name": "D&D World Engine",
+   "kind": "unreal",
+   "status": "building",
+   "folder": "E:\\WorldEngine",
+   "thread": "Build interactive D&D world map"
+  }
+ ]
+}

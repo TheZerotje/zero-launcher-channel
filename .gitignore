@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.pem
+!app/keys/zero-public.pem
+*.key
+*.pfx
+.env*
+*.exe
+*.msi
+*.blockmap
+.cache/
+coverage/

@@ -1,0 +1,109 @@
+'use strict';
+// DEVELOPER ONLY: "claude, do X" / "codex, do Y" / "chatgpt, do Y".
+// Runs the AI tool that is already installed on Zero's PC, signed in with Zero's own
+// account (Claude Code: `claude -p`, Codex: `codex exec`). Nothing goes through us.
+const { spawn, execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const RULES = [
+  'You are working for Zero from the Zero Launcher.',
+  'RULES: never change system volume, mute or audio device; never play sound; run tests muted/headless',
+  '(Godot --headless or --audio-driver Dummy, browsers --mute-audio).',
+  'Work only inside the current folder. Never close programs you did not start.',
+  'Never release or publish a game. Never change Tailscale or port 8443.',
+  'Make a backup before replacing files you did not create. Answer in very simple short English.',
+].join(' ');
+
+// "claude, add night mode" -> { tool: 'claude', task: 'add night mode' }
+function parse(text) {
+  const m = /^\s*(claude|codex|chatgpt|chat gpt|gpt)\s*[,:]?\s+([\s\S]+)$/i.exec(String(text || ''));
+  if (!m) return null;
+  const word = m[1].toLowerCase().replace(/\s/g, '');
+  return { tool: word === 'claude' ? 'claude' : 'codex', said: m[1], task: m[2].trim() };
+}
+
+function commandFor(tool, task, cwd) {
+  if (tool === 'claude') {
+    return {
+      cmd: 'claude',
+      args: ['-p', task, '--output-format', 'stream-json', '--verbose',
+        '--permission-mode', 'acceptEdits', '--append-system-prompt', RULES],
+    };
+  }
+  return {
+    cmd: 'codex',
+    args: ['exec', '--sandbox', 'workspace-write', '--cd', cwd, '--skip-git-repo-check', '--json', `${RULES}\n\nTASK: ${task}`],
+  };
+}
+
+// Turn one line of tool output into something short for the screen.
+function pretty(tool, line) {
+  let j;
+  try { j = JSON.parse(line); } catch { return line; }
+  if (tool === 'claude') {
+    if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
+      return j.message.content.map((c) => c.type === 'text' ? c.text
+        : c.type === 'tool_use' ? `[${c.name}] ${summariseInput(c.input)}` : '').filter(Boolean).join('\n');
+    }
+    if (j.type === 'result') return `DONE (${j.subtype || 'ok'})${j.result ? ': ' + j.result : ''}`;
+    return '';
+  }
+  const item = j.item || j.msg || j;
+  if (item.type === 'agent_message' || item.type === 'message') return item.text || item.message || '';
+  if (item.type === 'command_execution') return `[run] ${item.command || ''}`;
+  if (item.type === 'file_change') return `[files] ${(item.changes || []).map((c) => c.path).join(', ')}`;
+  if (j.type === 'turn.completed') return 'DONE';
+  if (j.type === 'error' || j.type === 'turn.failed') return 'ERROR: ' + (j.message || (j.error && j.error.message) || '');
+  return '';
+}
+function summariseInput(i) {
+  if (!i) return '';
+  return String(i.file_path || i.command || i.pattern || i.description || JSON.stringify(i)).slice(0, 120);
+}
+
+class AiHelper {
+  constructor(logRoot) { this.logRoot = logRoot; this.jobs = new Map(); this.n = 0; }
+
+  start(text, cwd, onLine, onEnd) {
+    const p = parse(text);
+    if (!p) throw new Error('Start with "claude," or "codex," or "chatgpt,". Example: claude, fix the jump bug');
+    if (!cwd || !fs.existsSync(cwd)) throw new Error('Pick a folder first');
+    const { cmd, args } = commandFor(p.tool, p.task, cwd);
+    const id = `${Date.now()}-${++this.n}`;
+    const dir = path.join(this.logRoot, id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ ...p, cwd, startedAt: new Date().toISOString() }, null, 2));
+    const log = fs.createWriteStream(path.join(dir, 'output.jsonl'));
+    const child = spawn(cmd, args, { cwd, windowsHide: true, shell: process.platform === 'win32', env: { ...process.env, CODEX_BRIDGE_NO_CUA: '1' } });
+    try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
+    this.jobs.set(id, child);
+    let buf = '';
+    const feed = (chunk) => {
+      log.write(chunk);
+      buf += chunk.toString('utf8');
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (line) { const t = pretty(p.tool, line); if (t) onLine(t); }
+      }
+    };
+    child.stdout.on('data', feed);
+    child.stderr.on('data', (d) => { log.write(d); });
+    child.on('error', (e) => onLine(`Could not start ${p.tool}: ${e.message}. Is it installed and signed in?`));
+    child.on('close', (code) => { this.jobs.delete(id); log.end(); onEnd && onEnd(code); });
+    return { id, tool: p.tool, task: p.task };
+  }
+
+  // Stop only OUR job (and the processes it started), never anything else.
+  stop(id) {
+    const child = this.jobs.get(id);
+    if (!child) return false;
+    if (process.platform === 'win32') execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => {});
+    else child.kill('SIGTERM');
+    return true;
+  }
+}
+
+module.exports = { AiHelper, parse, commandFor, pretty, RULES };
