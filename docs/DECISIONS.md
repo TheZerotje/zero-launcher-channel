@@ -102,3 +102,18 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     sees "<game> closed with an error", then can press "Show crash report" to read the exact text, and only then
     "Save and copy report" (or "No thanks"). The Godot log is looked up by the game's name and its .exe name under
     %APPDATA%\Godot\app_userdata\ (names with slashes or ".." are ignored); only the last 200 lines are added.
+36. **Download numbers** come from the public GitHub release (no token), are kept for 10 minutes, and keep the old
+    numbers if GitHub can't be reached. The repo is `github.repo` from developer.json, else
+    TheZerotje/zero-launcher-channel. This only READS from GitHub.
+37. **Release checklist**: the 5 ticks are saved per game + version (checklists.json). Missing ticks never block, but
+    Zero gets a "Some checks are not ticked. Release anyway?" box. After that the normal "Release to EVERYONE?" box
+    still comes. Both must be yes.
+38. **Key backup** copies the private key to the folder Zero picks, with the date in the name, never overwrites a
+    file, and checks the copy. It refuses the channel folder (that gets uploaded!), the friends folder, the app
+    folder and the folder where the key already is. A reminder comes once a month while there is no backup from the
+    last 30 days.
+39. **Discord**: only with `discordWebhook` in developer.json (it must be a real discord.com webhook address). The
+    address never goes to the screen or the repo. Zero sees the message, can change it, and only "Send" posts it.
+    Posts never ping @everyone or anyone else.
+40. **Ctrl+K** (developer): jump to any page or game. Typing "claude, …" or "codex, …" and Enter opens the AI helper
+    and starts it in the first AI folder from developer.json.

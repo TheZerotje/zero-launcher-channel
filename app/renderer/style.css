@@ -125,3 +125,16 @@ details.gameinfo{margin-top:12px;padding-top:12px;border-top:1px dashed var(--li
 .vote.on{border-color:var(--accent);background:#3d7dff33}
 .panel.crash{border-color:#e5484d88;background:#e5484d14}
 .crash-text{max-height:260px}
+/* ---- pop-ups, command box ---- */
+.modal-back,.palette{position:fixed;inset:0;background:#000a;display:grid;place-items:center;z-index:30}
+.palette{place-items:start center;padding-top:12vh}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;width:min(560px,92vw)}
+.modal h2{margin:0 0 10px}
+.modal .check{margin-bottom:6px}
+.pal-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(640px,92vw);overflow:hidden}
+.pal-input{width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;font-size:17px;padding:14px 16px;background:var(--panel)}
+.pal-list{max-height:50vh;overflow:auto;padding:6px}
+.pal-item{padding:9px 12px;border-radius:9px;cursor:pointer;display:flex;gap:10px;align-items:center}
+.pal-item.on,.pal-item:hover{background:var(--panel2)}
+.pal-kind{font-size:11px;font-weight:700;color:var(--dim);width:44px}
+td.dl{font-variant-numeric:tabular-nums}

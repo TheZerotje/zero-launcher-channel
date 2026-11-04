@@ -23,6 +23,12 @@ const godot = require('../core/godot');
 const { shortcutPlan, playArg } = require('../core/shortcut');
 const { isTrailer } = require('../core/catalogue');
 const crash = require('../core/crash');
+const { DownloadStats } = require('../core/stats');
+const discord = require('../core/discord');
+const keybackup = require('../core/keybackup');
+const CHECK_ITEMS = ['starts', 'sound', 'tested', 'notes', 'picture'];
+const CHECK_LABELS = { starts: 'The game starts', sound: 'No sound bugs', tested: 'Tested by a tester', notes: "What's new is written", picture: 'Picture is set' };
+let stats = null;
 const crypto = require('crypto');
 
 const DEFAULTS = {
@@ -102,6 +108,17 @@ function uploadNeeded() {
   return !!sha && sha !== (readJson(file('uploaded.json'), {}) || {}).catalogueSha;
 }
 
+// Once a month: remind Zero to back up the secret key (if there is no recent backup).
+function checkKeyBackup() {
+  const d = developer();
+  if (!d || !d.privateKeyFile) return;
+  const s = readJson(file('settings.json'), {});
+  if (!keybackup.backupWarningDue({ lastBackup: s.keyBackup && s.keyBackup.at, lastWarning: s.keyBackupWarned })) return;
+  notify('Back up your secret key', 'Settings > Back up my secret key. Use a USB stick.');
+  send('toast', { kind: 'error', text: 'Back up your secret key: Settings > Back up my secret key.' });
+  s.keyBackupWarned = new Date().toISOString(); writeJson(file('settings.json'), s);
+}
+
 // Friday 12:00: "Your new week plan is ready" (developer only).
 function checkWeekNotice() {
   if (!developer()) return;
@@ -164,6 +181,9 @@ function state() {
     })),
     testers: d && catalogue ? catalogue.testers || [] : undefined,
     uploadNeeded: d ? uploadNeeded() : undefined,
+    hasDiscord: d ? !!d.discordWebhook : undefined,
+    keyBackup: d ? (readJson(file('settings.json'), {}) || {}).keyBackup || null : undefined,
+    checklists: d ? readJson(file('checklists.json'), {}) : undefined,
     crashes: [...crashes.entries()].map(([gameId, c]) => ({ gameId, ...c })),
     error: catalogueError, offline, lastCheck, muted: MUTED, nextRetry: failures ? retryDelay(failures) : null,
   };
@@ -366,6 +386,13 @@ const api = {
   devPickFile: async () => { const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Friend game', extensions: ['zlsub'] }] }); return r.canceled ? null : r.filePaths[0]; },
   devToTesters: (id, v) => { devChannel().toTesters(id, v); return refresh(); },
   devRelease: async (id, v) => {
+    // Release checklist: missing ticks do not block, but Zero must say "Release anyway".
+    const ticks = (readJson(file('checklists.json'), {})[`${id}@${v}`]) || {};
+    const missing = CHECK_ITEMS.filter((k) => !ticks[k]).map((k) => CHECK_LABELS[k]);
+    if (missing.length) {
+      const a = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Release anyway', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Some checks are not ticked. Release anyway?', detail: 'Not ticked:\n- ' + missing.join('\n- ') });
+      if (a.response !== 0) return state();
+    }
     const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Release to everyone', 'Cancel'], defaultId: 1, message: `Release ${id} ${v} to EVERYONE?`, detail: 'Players get it automatically within about 1 hour after you upload.' });
     if (r.response !== 0) return state();
     devChannel().release(id, v); return refresh();
@@ -382,6 +409,35 @@ const api = {
     return refresh();
   },
   devSetTestNotes: (id, v, text) => { devChannel().setTestNotes(id, v, text); return refresh(); },
+  devSaveChecklist: (id, v, ticks) => {
+    const all = readJson(file('checklists.json'), {});
+    all[`${id}@${v}`] = Object.fromEntries(CHECK_ITEMS.map((k) => [k, !!ticks[k]]));
+    writeJson(file('checklists.json'), all);
+    return all[`${id}@${v}`];
+  },
+  devDownloads: async (force) => {
+    const d = developer();
+    if (!stats) stats = new DownloadStats({ repo: (d.github && d.github.repo) || 'TheZerotje/zero-launcher-channel' });
+    const c = await stats.counts(!!force);
+    return { perGame: DownloadStats.perVersion(catalogue, c.byFile), at: new Date(c.at).toISOString(), error: c.error };
+  },
+  devDiscordPreview: (id, v) => {
+    const g = catalogue && catalogue.games.find((x) => x.id === id);
+    const r = g && (g.releases || []).find((x) => x.version === v);
+    if (!r) throw new Error('No such version');
+    if (!developer().discordWebhook) throw new Error('Put your Discord webhook address in developer.json (discordWebhook) first');
+    return discord.releaseMessage(g, r);
+  },
+  devDiscordSend: async (text) => discord.post(developer().discordWebhook, text),
+  devBackupKey: async () => {
+    const d = developer();
+    const pick = await dialog.showOpenDialog(win, { title: 'Pick a folder for the backup (a USB stick)', properties: ['openDirectory', 'createDirectory'] });
+    if (pick.canceled || !pick.filePaths[0]) return null;
+    const r = keybackup.backupKey({ keyFile: d.privateKeyFile, toDir: pick.filePaths[0], forbidden: [d.channelDir, d.friendsDir, path.join(__dirname, '..')] });
+    const s = readJson(file('settings.json'), {}); s.keyBackup = { at: r.at, remindAt: r.remindAt, folder: pick.filePaths[0] }; writeJson(file('settings.json'), s);
+    send('state', state());
+    return r;
+  },
   devAddNews: (n) => { devChannel().addNews({ title: n.title, text: n.text || '', image: n.image || '' }); return refresh(); },
   devRemoveNews: (id) => { devChannel().removeNews(id); return refresh(); },
   devSetTester: (o) => { devChannel().setTester({ accountId: o.accountId, name: o.name, games: o.games || [] }); return refresh(); },
@@ -507,6 +563,11 @@ const CHECKS = {
     if (o.description !== undefined) V.str(o.description, 'short text', 500);
     if (o.image !== undefined) V.url(o.image, 'picture address', { httpsOnly: true });
   },
+  devSaveChecklist: ([id, v, ticks]) => { V.gameId(id); V.version(v); V.obj(ticks, 'ticks'); },
+  devDownloads: ([force]) => { if (force !== undefined) V.bool(force); },
+  devDiscordPreview: gidVer,
+  devDiscordSend: ([text]) => V.str(text, 'message', 2000, { allowEmpty: false }),
+  devBackupKey: none,
   devAddNews: ([n]) => { V.obj(n, 'news'); V.str(n.title, 'title', 80, { allowEmpty: false }); V.optStr(n.text, 'text', 600); V.url(n.image, 'picture address', { httpsOnly: true }); },
   devRemoveNews: ([id]) => V.match(id, /^n[0-9a-z]{4,24}$/, 'news id'),
   devSetTester: ([o]) => { V.obj(o); V.str(o.accountId, 'account ID', 20); V.optStr(o.name, 'name', 32); V.list(o.games || [], 'games').forEach(V.gameId); },
@@ -600,6 +661,7 @@ else {
     checkWeekNotice();
     setInterval(checkWeekNotice, 60 * 1000);
     playFromArgs(process.argv);
+    checkKeyBackup();
   });
   app.on('window-all-closed', () => { if (!developer()) app.quit(); });
 }

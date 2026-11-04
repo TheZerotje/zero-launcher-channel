@@ -16,6 +16,19 @@ let godotList = null;   // Godot projects the launcher can export (developer)
 let upload = null;      // { text, done, total } while uploading
 const godotLog = {};    // gameId -> last lines of the Godot export
 let aiHistory = null;
+let dlData = null;      // download numbers (developer)
+
+// Simple pop-up box. buttons: [[label, cls, fn]]; fn returning false keeps it open.
+function modal(title, body, buttons) {
+  closeModal();
+  const box = h('div', { class: 'modal-back', onclick: (e) => { if (e.target === box) closeModal(); } },
+    h('div', { class: 'modal', role: 'dialog', 'aria-label': title }, h('h2', {}, title), body,
+      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:16px' }, buttons.map(([label, cls, fn]) =>
+        h('button', { class: cls, onclick: async () => { try { if ((await fn()) !== false) closeModal(); } catch {} } }, label)))));
+  document.body.append(box);
+  const first = box.querySelector('input, textarea, button'); if (first) first.focus();
+}
+function closeModal() { document.querySelector('.modal-back')?.remove(); }
 
 const $ = (s) => document.querySelector(s);
 const t = (text, vars) => window.ZLStrings.t(S && S.settings ? S.settings.lang : 'en', text, vars);
@@ -325,6 +338,12 @@ P.settings = () => {
       onOff(!!st.easyFont, (e) => setS('easyFont', e.target.checked), t('Easy-to-read letters (Atkinson Hyperlegible)')),
       h('label', { class: 'inline' }, t('Language'), h('select', { id: 'set-lang', onchange: (e) => setS('lang', e.target.value) },
         h('option', { value: 'en', selected: st.lang !== 'nl' }, 'English'), h('option', { value: 'nl', selected: st.lang === 'nl' }, 'Nederlands')))),
+    S.mode === 'developer' ? h('div', { class: 'panel keybackup' }, h('h3', {}, 'Back up my secret key'),
+      h('p', {}, 'Your secret key signs the game list. If you lose it, players cannot get updates until they reinstall. Keep a copy on a USB stick.'),
+      S.keyBackup ? h('p', { class: 'dim' }, `Last backup: ${new Date(S.keyBackup.at).toLocaleDateString()} · next reminder: ${new Date(S.keyBackup.remindAt).toLocaleDateString()}`)
+        : h('p', { class: 'warn' }, 'No backup yet.'),
+      h('button', { class: 'btn', onclick: async () => { const r = await call('devBackupKey'); if (r) toast('Key copied. Keep the USB stick safe.'); } }, 'Back up my secret key'),
+      h('p', { class: 'dim' }, 'It is only copied to the folder you pick. It is never uploaded.')) : null,
   ];
 };
 const HELP = [
@@ -431,6 +450,27 @@ P['dev-week'] = () => {
     h('div', { class: 'panel' }, h('h3', {}, 'To do'), list(W.todos, 'todos')),
     weekData.history.length ? h('div', { class: 'panel' }, h('h3', {}, 'Earlier weeks'), weekData.history.map((x) => h('div', { class: 'row', style: 'justify-content:space-between;padding:4px 0' }, h('span', {}, 'Week of ' + x.key), h('span', { class: 'dim' }, `${x.done} of ${x.total} done`)))) : null];
 };
+const CHECKS_UI = [['starts', 'The game starts'], ['sound', 'No sound bugs'], ['tested', 'Tested by a tester'], ['notes', "What's new is written"], ['picture', 'Picture is set']];
+function releaseChecklist(g, r) {
+  const saved = (S.checklists || {})[`${g.id}@${r.version}`] || {};
+  const hint = { notes: r.notes ? `"${r.notes}"` : 'empty now', picture: g.image ? 'set' : 'no picture yet', tested: r.state === 'testing' ? 'it is with testers now' : 'not sent to testers' };
+  const body = h('div', { class: 'checklist' }, h('p', { class: 'dim' }, `${g.name} ${r.version}. Tick what is true. Your ticks are saved.`),
+    CHECKS_UI.map(([k, label]) => h('label', { class: 'check' }, h('input', { type: 'checkbox', class: 'rc', value: k, checked: !!saved[k] }), h('span', { class: 'ctext' }, label), hint[k] ? h('span', { class: 'dim' }, hint[k]) : null)));
+  const ticks = () => Object.fromEntries([...document.querySelectorAll('input.rc')].map((i) => [i.value, i.checked]));
+  modal('Before you release', body, [
+    ['Cancel', 'ghost', () => true],
+    ['Save ticks', 'ghost', async () => { await call('devSaveChecklist', g.id, r.version, ticks()); S.checklists = { ...(S.checklists || {}), [`${g.id}@${r.version}`]: ticks() }; toast('Ticks saved'); }],
+    ['Release to everyone', 'btn good', async () => { await call('devSaveChecklist', g.id, r.version, ticks()); closeModal(); set(await call('devRelease', g.id, r.version)); }],
+  ]);
+}
+async function discordPost(g, r) {
+  const text = await call('devDiscordPreview', g.id, r.version);
+  modal('Post to Discord', h('div', {}, h('p', { class: 'dim' }, 'This is what will be posted. Change it if you want. Nothing is sent until you press Send.'),
+    h('textarea', { id: 'discord-text', maxlength: 2000, style: 'min-height:120px' }, text)), [
+    ['Cancel', 'ghost', () => true],
+    ['Send', 'btn', async () => { await call('devDiscordSend', $('#discord-text').value); toast('Posted to Discord'); }],
+  ]);
+}
 function gameInfoBox(g) {
   const id = 'gi-' + g.id;
   return h('details', { class: 'gameinfo' }, h('summary', {}, 'Game page: pictures, trailer, coming soon'),
@@ -446,6 +486,7 @@ function gameInfoBox(g) {
 }
 P['dev-publish'] = () => {
   const pc = S.games.filter((g) => g.kind === 'pc');
+  if (!dlData) { dlData = { perGame: {}, loading: true }; call('devDownloads').then((r) => { dlData = r; render(); }).catch(() => {}); }
   if (!godotList) { godotList = []; call('devGodotProjects').then((r) => { godotList = r; render(); }).catch(() => {}); }
   const godotFor = (id) => godotList.find((p) => p.id === id);
   const godotBox = (g) => {
@@ -466,9 +507,11 @@ P['dev-publish'] = () => {
   };
   const verRow = (g, r) => h('tr', {}, h('td', {}, 'v' + r.version), h('td', {}, h('span', { class: 'pill ' + r.state }, r.state)),
     h('td', { class: 'dim' }, r.notes || ''), h('td', { class: 'dim' }, r.file ? mb(r.file.size) : ''),
+    h('td', { class: 'dl' }, dlData && dlData.perGame[g.id] ? String(dlData.perGame[g.id].versions[r.version] || 0) : '–'),
     h('td', {}, h('div', { class: 'row' },
       r.state === 'unreleased' ? h('button', { class: 'btn test small', onclick: () => call('devToTesters', g.id, r.version).then(set) }, 'Send to testers') : null,
-      r.state === 'unreleased' || r.state === 'testing' ? h('button', { class: 'btn good small', onclick: () => call('devRelease', g.id, r.version).then(set) }, 'Release to everyone') : null,
+      r.state === 'unreleased' || r.state === 'testing' ? h('button', { class: 'btn good small', onclick: () => releaseChecklist(g, r) }, 'Release to everyone') : null,
+      r.state === 'released' && S.hasDiscord ? h('button', { class: 'ghost small', onclick: () => discordPost(g, r) }, 'Post to Discord') : null,
       r.state === 'testing' ? h('button', { class: 'ghost small', onclick: () => call('devUnrelease', g.id, r.version).then(set) }, 'Back to unreleased') : null),
       r.state === 'unreleased' || r.state === 'testing' ? h('div', { class: 'row', style: 'margin-top:6px' },
         h('input', { class: 'testnotes', id: `tn-${g.id}-${r.version.replace(/\W/g, '_')}`, value: r.testNotes || '', maxlength: 600, placeholder: 'What to test (for testers)', style: 'flex:1;min-width:200px' }),
@@ -483,12 +526,14 @@ P['dev-publish'] = () => {
       } }, upload ? 'Uploading…' : 'Upload now')),
       S.uploadNeeded ? h('p', {}, 'You changed things that players do not have yet. Press Upload now when you are ready.') : null,
       upload ? h('div', { class: 'upload-progress' }, h('div', { class: 'bar', style: 'margin:8px 0' }, h('i', { style: `width:${upload.total ? Math.round((upload.done / upload.total) * 100) : 5}%` })), h('span', { class: 'dim' }, upload.text)) : null,
-      h('p', { class: 'dim' }, 'Sends the list and new game files to GitHub. Players get it within about 1 hour.')),
+      h('p', { class: 'dim' }, 'Sends the list and new game files to GitHub. Players get it within about 1 hour.'),
+      h('div', { class: 'row dim' }, dlData && dlData.at ? `Download numbers from GitHub, ${new Date(dlData.at).toLocaleTimeString()}${dlData.error ? ' · ' + dlData.error : ''}` : 'Getting download numbers…',
+        h('button', { class: 'ghost small', onclick: async () => { dlData = await call('devDownloads', true); render(); } }, 'Refresh numbers'))),
     pc.map((g) => h('div', { class: 'panel' },
       h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', { style: 'margin:0' }, g.name, g.owner && g.owner !== 'zero' ? h('span', { class: 'dim' }, '  by ' + g.owner) : null),
         h('div', { class: 'row' }, h('button', { class: 'ghost small', onclick: () => call('devGoBack', g.id).then(set) }, 'Go back to previous version'),
           h('button', { class: 'ghost small', onclick: () => call('devHide', g.id, !g.hidden).then(set) }, g.hidden ? 'Show in store' : 'Hide from store'))),
-      h('table', {}, h('tr', {}, ['Version', 'State', "What's new", 'Size', ''].map((t) => h('th', {}, t))),
+      h('table', {}, h('tr', {}, ['Version', 'State', "What's new", 'Size', 'Downloads', ''].map((t) => h('th', {}, t))),
         (g.releases || []).slice().reverse().map((r) => verRow(g, r))),
       h('div', { class: 'form', style: 'margin-top:14px' },
         h('label', {}, 'New version', h('input', { id: 'v-' + g.id, placeholder: 'example 0.20.0' })),
@@ -575,9 +620,13 @@ P['dev-friends'] = () => {
 };
 P['dev-ai'] = () => {
   const sel = h('select', { id: 'ai-folder' });
-  call('devAiFolders').then((fs) => { fs.forEach((f) => sel.append(h('option', { value: f.path }, `${f.name}  (${f.path})`))); if (!fs.length) sel.append(h('option', { value: '' }, 'Add folders to aiFolders in developer.json')); });
+  call('devAiFolders').then((fs) => {
+    fs.forEach((f) => sel.append(h('option', { value: f.path }, `${f.name}  (${f.path})`)));
+    if (!fs.length) sel.append(h('option', { value: '' }, 'Add folders to aiFolders in developer.json'));
+    if (pendingAi && fs.length) { const text = pendingAi; pendingAi = null; $('#ai-text').value = text; go2(); }
+  });
   const log = h('div', { class: 'log', id: 'ai-log' }, aiLog.join('\n'));
-  const go = async () => {
+  const go2 = async () => {
     const text = $('#ai-text').value.trim(); if (!text) return;
     aiLog.push(`\n> ${text}`);
     aiJob = await call('devAiStart', text, sel.value);
@@ -596,8 +645,8 @@ P['dev-ai'] = () => {
       : h('p', { class: 'dim' }, 'No jobs yet.'));
   return [h('h1', {}, 'AI helper'), h('p', { class: 'sub' }, 'Type "claude, …" or "codex, …" or "chatgpt, …". It runs on this PC with your own account. No sound, no releases.'),
     h('div', { class: 'panel' }, h('label', {}, 'Folder', sel),
-      h('textarea', { id: 'ai-text', style: 'margin-top:10px', placeholder: 'claude, add a night mode to the menu', onkeydown: (e) => { if (e.key === 'Enter' && e.ctrlKey) go(); } }),
-      h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: go }, 'Go'),
+      h('textarea', { id: 'ai-text', style: 'margin-top:10px', placeholder: 'claude, add a night mode to the menu', onkeydown: (e) => { if (e.key === 'Enter' && e.ctrlKey) go2(); } }),
+      h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: go2 }, 'Go'),
         aiJob ? h('button', { class: 'btn bad', onclick: () => call('devAiStop', aiJob.id) }, 'Stop') : null,
         h('button', { class: 'ghost', onclick: () => call('devChatGPT') }, 'Open ChatGPT window'),
         h('span', { class: 'dim' }, 'Ctrl+Enter = Go'))),
@@ -665,8 +714,48 @@ window.zl.on('ai', (m) => {
   if (m.end !== undefined && page === 'dev-ai') render();
 });
 // Keyboard: Ctrl+F = search box on this page (everyone). Developer: Ctrl+1..9 = pages in the menu.
+// ---------------- Ctrl+K command box (developer) ----------------
+let pendingAi = null; // task typed in the command box, started when the AI page is ready
+function paletteItems(q) {
+  const text = q.trim();
+  const items = [];
+  if (/^(claude|codex|chatgpt|chat gpt|gpt)\s*[,:]?\s+\S/i.test(text)) items.push({ label: `Run in AI helper: ${text}`, kind: 'AI', run: () => { pendingAi = text; go('dev-ai'); } });
+  const { p, dev, fr } = pages();
+  for (const [id, label] of [...dev, ...p, ...fr]) items.push({ label, kind: 'Page', run: () => go(id) });
+  for (const g of S.games) items.push({ label: g.name, kind: 'Game', run: () => { page = 'store'; gameId = g.id; render(); } });
+  const low = text.toLowerCase();
+  return items.filter((i) => i.kind === 'AI' || !low || i.label.toLowerCase().includes(low)).slice(0, 12);
+}
+function openPalette() {
+  if (document.querySelector('.palette')) return;
+  let sel = 0;
+  const list = h('div', { class: 'pal-list' });
+  const draw = () => {
+    const items = paletteItems(input.value);
+    sel = Math.min(sel, Math.max(0, items.length - 1));
+    list.innerHTML = '';
+    items.forEach((it, i) => list.append(h('div', { class: 'pal-item' + (i === sel ? ' on' : ''), onclick: () => { close(); it.run(); } }, h('span', { class: 'pal-kind' }, it.kind), it.label)));
+    if (!items.length) list.append(h('div', { class: 'dim', style: 'padding:10px' }, 'Nothing found.'));
+    return items;
+  };
+  const input = h('input', { class: 'pal-input', placeholder: 'Go to a page or game, or type "claude, …" / "codex, …"', oninput: () => { sel = 0; draw(); },
+    onkeydown: (e) => {
+      const items = paletteItems(input.value);
+      if (e.key === 'ArrowDown') { sel = Math.min(sel + 1, items.length - 1); draw(); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { sel = Math.max(sel - 1, 0); draw(); e.preventDefault(); }
+      else if (e.key === 'Enter' && items[sel]) { close(); items[sel].run(); }
+      else if (e.key === 'Escape') close();
+    } });
+  const box = h('div', { class: 'palette', onclick: (e) => { if (e.target === box) close(); } }, h('div', { class: 'pal-box' }, input, list));
+  const close = () => box.remove();
+  document.body.append(box);
+  draw();
+  input.focus();
+}
+
 document.addEventListener('keydown', (e) => {
   if (!S || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if ((e.key === 'k' || e.key === 'K') && S.mode === 'developer') { e.preventDefault(); openPalette(); return; }
   if (e.key === 'f' || e.key === 'F') {
     const box = document.querySelector('#main input.search, #hub-q');
     if (box) { e.preventDefault(); box.focus(); box.select(); }

@@ -166,3 +166,77 @@ test('tester helpers: what to test (purple box), quick feedback, crash report sh
     assert.match(r, /only for test versions/);
   } finally { await close(app); }
 });
+
+test('developer power 2: download numbers, release checklist, Discord preview, key backup, Ctrl+K', async () => {
+  const demo = makeDemo();
+  const devFile = path.join(demo.dev, 'developer.json');
+  const d = JSON.parse(fs.readFileSync(devFile, 'utf8'));
+  d.discordWebhook = 'https://discord.com/api/webhooks/123/test-token';
+  fs.writeFileSync(devFile, JSON.stringify(d));
+  const usb = path.join(demo.dir, 'usb'); fs.mkdirSync(usb);
+  const { app, win } = await launch(demo.dev);
+  try {
+    await app.evaluate(({ dialog }, usbDir) => {
+      global.posts = []; global.boxes = [];
+      global.fetch = async (url, opts = {}) => {
+        if (String(url).includes('/releases/tags/channel')) return { ok: true, status: 200, json: async () => ({ assets: [{ name: 'railrove-0.19.12.0.zip', download_count: 41 }, { name: 'railrove-0.20.0.zip', download_count: 5 }] }) };
+        global.posts.push({ url: String(url), body: opts.body });
+        return { ok: true, status: 204, json: async () => ({}) };
+      };
+      dialog.showMessageBox = async (_w, o) => { global.boxes.push((o || _w).message); return { response: 0 }; };
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [usbDir] });
+    }, usb);
+    await goto(win, 'Publish');
+    await win.locator('tr', { hasText: 'v0.19.12.0' }).locator('td.dl', { hasText: '41' }).waitFor();
+    // release checklist: tick 2 of 5, release -> "Release anyway?" asked
+    const row = win.locator('tr', { hasText: 'v0.20.0' });
+    await row.locator('button', { hasText: 'Release to everyone' }).click();
+    const m = win.locator('.modal');
+    await m.locator('label', { hasText: 'The game starts' }).locator('input').check();
+    await m.locator('label', { hasText: 'No sound bugs' }).locator('input').check();
+    await shot(win, 'dev-release-checklist');
+    await m.locator('button', { hasText: 'Release to everyone' }).click();
+    await row.locator('text=released').waitFor();
+    const boxes = await app.evaluate(() => global.boxes);
+    assert.ok(boxes.some((b) => /Release anyway/.test(b)), 'asked Release anyway');
+    assert.ok(boxes.some((b) => /to EVERYONE/.test(b)), 'normal release confirm still asked');
+    const saved = JSON.parse(fs.readFileSync(path.join(demo.dev, 'checklists.json'), 'utf8'))['railrove@0.20.0'];
+    assert.deepEqual(saved, { starts: true, sound: true, tested: false, notes: false, picture: false });
+    // Discord: preview first, nothing sent until Send
+    await row.locator('button', { hasText: 'Post to Discord' }).click();
+    const ta = win.locator('#discord-text');
+    await ta.waitFor();
+    assert.match(await ta.inputValue(), /Railrove 0\.20\.0/);
+    assert.equal((await app.evaluate(() => global.posts)).length, 0, 'nothing sent yet');
+    await ta.fill('Railrove 0.20.0 is out! @everyone');
+    await shot(win, 'dev-discord-preview');
+    await win.locator('.modal button', { hasText: 'Send' }).click();
+    await win.locator('.toast', { hasText: 'Posted to Discord' }).waitFor();
+    const posts = await app.evaluate(() => global.posts);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, 'https://discord.com/api/webhooks/123/test-token');
+    assert.deepEqual(JSON.parse(posts[0].body).allowed_mentions, { parse: [] });
+    const st = await win.evaluate(() => window.zl.call('state'));
+    assert.equal(JSON.stringify(st).includes('test-token'), false, 'webhook never reaches the screen');
+    // key backup
+    await goto(win, 'Settings');
+    await win.locator('.keybackup button', { hasText: 'Back up my secret key' }).click();
+    await win.locator('.keybackup', { hasText: 'Last backup' }).waitFor();
+    const files = fs.readdirSync(usb);
+    assert.equal(files.length, 1);
+    assert.equal(fs.readFileSync(path.join(usb, files[0]), 'utf8'), fs.readFileSync(path.join(demo.dir, 'zero-private.pem'), 'utf8'));
+    await shot(win, 'dev-settings-key-backup');
+    // Ctrl+K
+    await win.keyboard.press('Control+k');
+    await win.locator('.pal-input').fill('marchl');
+    await win.keyboard.press('Enter');
+    await win.locator('h1', { hasText: 'Marchlands' }).waitFor();
+    await win.keyboard.press('Control+k');
+    await win.locator('.pal-input').fill('claude, fix the jump bug');
+    await win.locator('.pal-item', { hasText: 'Run in AI helper' }).waitFor();
+    await shot(win, 'dev-command-box');
+    await win.keyboard.press('Enter');
+    await win.locator('h1', { hasText: 'AI helper' }).waitFor();
+    await win.locator('#ai-log', { hasText: '> claude, fix the jump bug' }).waitFor();
+  } finally { await close(app); }
+});

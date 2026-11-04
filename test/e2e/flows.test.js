@@ -94,6 +94,8 @@ test('developer: add version, send to testers, release (confirm mocked), go back
     await row().locator('button', { hasText: 'Send to testers' }).click();
     await row().locator('text=testing').waitFor();
     await row().locator('button', { hasText: 'Release to everyone' }).click();
+    await win.locator('.modal', { hasText: 'Before you release' }).waitFor(); // release checklist
+    await win.locator('.modal button', { hasText: 'Release to everyone' }).click();
     await row().locator('text=released').waitFor();
     let r = readCat(demo).games.find((g) => g.id === 'railrove').releases.find((x) => x.version === '0.21.0');
     assert.equal(r.state, 'released');
@@ -114,6 +116,7 @@ test('release needs the confirm box: Cancel keeps it unreleased', async () => {
     await goto(win, 'Publish');
     const row = win.locator('tr', { hasText: 'v0.4.4.0' });
     await row.locator('button', { hasText: 'Release to everyone' }).click();
+    await win.locator('.modal button', { hasText: 'Release to everyone' }).click();
     await win.waitForTimeout(500);
     const r = readCat(demo).games.find((g) => g.id === 'marchlands').releases[0];
     assert.equal(r.state, 'unreleased');

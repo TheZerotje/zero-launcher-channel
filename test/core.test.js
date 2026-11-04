@@ -658,3 +658,47 @@ test('tester helpers: what to test note, crash rules, Godot log lines', () => {
   assert.match(text, /line 101\n/);
   assert.doesNotMatch(text, /line 100\n/, 'only the last 200 lines');
 });
+
+test('developer power 2: download counts (cached 10 min), Discord post rules, key backup', async () => {
+  const { DownloadStats } = require('../core/stats');
+  let calls = 0; let t = 0;
+  const fakeFetch = async (url) => { calls++; assert.match(url, /\/repos\/me\/chan\/releases\/tags\/channel$/); return { ok: true, status: 200, json: async () => ({ assets: [{ name: 'rr-1.0.zip', download_count: 7 }, { name: 'rr-1.1.zip', download_count: 3 }] }) }; };
+  const st = new DownloadStats({ repo: 'me/chan', fetchImpl: fakeFetch, now: () => t });
+  let c = await st.counts();
+  assert.equal(c.byFile['rr-1.0.zip'], 7);
+  t += 5 * 60000; await st.counts(); assert.equal(calls, 1, 'cached');
+  t += 6 * 60000; await st.counts(); assert.equal(calls, 2, 'after 10 minutes asks again');
+  const per = DownloadStats.perVersion({ games: [{ id: 'rr', releases: [{ version: '1.0', file: { url: 'packages/rr/rr-1.0.zip' } }, { version: '1.1', file: { url: 'packages/rr/rr-1.1.zip' } }] }] }, c.byFile);
+  assert.deepEqual(per.rr, { total: 10, versions: { '1.0': 7, '1.1': 3 } });
+  const down = new DownloadStats({ repo: 'me/chan', fetchImpl: async () => { throw new Error('offline'); } });
+  c = await down.counts(); assert.match(c.error, /Could not get/);
+
+  const discord = require('../core/discord');
+  assert.equal(discord.isWebhook('https://discord.com/api/webhooks/123/abc-DEF_1'), true);
+  assert.equal(discord.isWebhook('http://discord.com/api/webhooks/123/abc'), false);
+  assert.equal(discord.isWebhook('https://evil.test/api/webhooks/123/abc'), false);
+  const msg = discord.releaseMessage({ name: 'Railrove' }, { version: '0.20.0', notes: 'New wagons' });
+  assert.match(msg, /Railrove 0\.20\.0/); assert.match(msg, /New wagons/);
+  let posted = null;
+  await discord.post('https://discord.com/api/webhooks/1/x', 'Hi @everyone', async (u, o) => { posted = JSON.parse(o.body); return { ok: true, status: 204 }; });
+  assert.deepEqual(posted.allowed_mentions, { parse: [] }, 'never pings everyone');
+  await assert.rejects(discord.post('https://evil.test/x', 'hi', async () => ({ ok: true })), /looks wrong/);
+  await assert.rejects(discord.post('https://discord.com/api/webhooks/1/x', 'x'.repeat(2001), async () => ({ ok: true })), /too long/);
+
+  const { backupKey, backupWarningDue } = require('../core/keybackup');
+  const home = tmp(), usb = tmp(), channel = tmp();
+  const key = path.join(home, 'zero-private.pem');
+  fs.writeFileSync(key, generateKeyPair().privateKey);
+  assert.throws(() => backupKey({ keyFile: key, toDir: channel, forbidden: [channel] }), /Not this folder/);
+  assert.throws(() => backupKey({ keyFile: key, toDir: path.join(channel, 'packages'), forbidden: [channel] }), /Pick a folder|Not this folder/);
+  assert.throws(() => backupKey({ keyFile: key, toDir: home, forbidden: [] }), /another place/);
+  const a = backupKey({ keyFile: key, toDir: usb, forbidden: [channel] });
+  const b = backupKey({ keyFile: key, toDir: usb, forbidden: [channel] });
+  assert.notEqual(a.file, b.file, 'never overwrites');
+  assert.equal(fs.readFileSync(a.file, 'utf8'), fs.readFileSync(key, 'utf8'));
+  const now = Date.parse('2026-11-04T00:00:00Z');
+  assert.equal(backupWarningDue({ now }), true);
+  assert.equal(backupWarningDue({ lastWarning: '2026-11-01T00:00:00Z', now }), false, 'once a month');
+  assert.equal(backupWarningDue({ lastBackup: '2026-10-20T00:00:00Z', now }), false);
+  assert.equal(backupWarningDue({ lastBackup: '2026-09-01T00:00:00Z', lastWarning: '2026-09-20T00:00:00Z', now }), true);
+});
