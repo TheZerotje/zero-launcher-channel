@@ -52,7 +52,7 @@ function toast(text, kind = 'info') {
   $('#toasts').append(el);
   setTimeout(() => el.remove(), kind === 'error' ? 8000 : 4000);
 }
-const mb = (n) => (n / 1048576).toFixed(n > 1048576 * 10 ? 0 : 1) + ' MB';
+const mb = (n) => (n < 104858 ? '< 0.1' : (n / 1048576).toFixed(n > 1048576 * 10 ? 0 : 1)) + ' MB';
 const initials = (n) => String(n || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const onOff = (checked, onchange, label) => h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked, onchange }), label);
 
@@ -92,6 +92,9 @@ function art(g) {
   const st = g.current && g.current.state !== 'released' ? g.current.state : null;
   const a = h('div', { class: 'art' }, initials(g.name),
     h('span', { class: 'tag ' + (st || g.kind) }, st ? (st === 'testing' ? t('TEST VERSION') : 'UNRELEASED') : (g.kind === 'web' ? t('PLAY NOW') : t('PC GAME'))));
+  // No picture yet: a calm colour made from the name, so every game looks a bit different.
+  const hue = [...String(g.name || g.id)].reduce((n, c) => (n * 31 + c.charCodeAt(0)) % 360, 7);
+  a.style.backgroundImage = `linear-gradient(135deg, hsl(${hue} 38% 26%), hsl(${(hue + 50) % 360} 42% 20%))`;
   if (g.image && /^https:\/\//.test(g.image)) a.style.backgroundImage = `url("${g.image.replace(/["\\()]/g, '')}")`;
   return a;
 }

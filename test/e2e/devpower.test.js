@@ -52,7 +52,7 @@ test('My projects: git commits, last build size, Copy path; AI helper past jobs'
     assert.match(await row.textContent(), /Last build: /);
     await row.locator('button', { hasText: 'Copy path' }).click();
     assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), proj);
-    await shot(win, 'dev-my-games-git');
+    await shot(win, 'dev-my-projects-git');
     await goto(win, 'AI helper');
     const job = win.locator('.ai-jobs tr', { hasText: 'fix the jump bug' });
     await job.waitFor();
