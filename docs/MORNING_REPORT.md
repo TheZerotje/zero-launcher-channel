@@ -88,13 +88,35 @@ See [DECISIONS.md](DECISIONS.md).
   see tech words, every button has words, and no page is too wide.
 - **Look**: every game without a picture gets its own calm colour; My projects boxes and rows tidied.
 
+## Morning extras (you said "All 4", then "1 and 4", then "essentials")
+- **Pick folder**: a red (missing) folder in My projects is fixed in one click. **+ Folder** adds one more.
+- **My reports** (player menu): every problem report, crash report and test feedback from this PC. Show, Copy,
+  Show in folder. Only real report files can be read.
+- **Welcome box**: shows once for a new player (3 steps, one OK button). Never for you.
+- **Continue playing**: the 3 games you played last are on top of the Store.
+- **Play time + badges** on each game page (First play, 1 hour, 5 days, 10 hours, Tested a test version).
+  Kept on the player's PC only.
+- **Tester feedback**: testers press 1 to 5 stars and write one line. The saved text has a code. They send it to
+  you; you paste it on **Testers** > Tester feedback and see all feedback per game and version, with the average.
+  Kept on your PC only. Nothing is uploaded.
+- **Launcher log**: the launcher writes short lines (start, game list, installs, refused calls, crashes) to a
+  file on the PC. Players copy it from My reports only if you ask. No secrets, no typed text.
+- **Back up my launcher data** (Settings): one zip with settings, account, play time and reports. Load it on a new
+  PC. Keys, developer.json and friend.json are never in it.
+- **Launcher update**: on Publish > Launcher update you add `dist/ZeroLauncherSetup-<version>.exe`. Only you see
+  it until you press **Send to players** and then **Upload now**. Players get one big button. The file is checked
+  (SHA-256 from your signed list) before it can start. I never added or uploaded a setup.
+- **Not code (your call)**: a code-signing certificate. Without it Windows shows the blue "Windows protected your
+  PC" box for every new launcher version.
+
 ## Tests and CI
-- Core tests: **34 pass, 0 fail** (`npm test`).
-- App tests (real app, muted, virtual screen): **37 pass, 0 fail** (`npm run test:e2e`).
+- Core tests: **39 pass, 0 fail** (`npm test`).
+- App tests (real app, muted, virtual screen): **45 pass, 0 fail** (`npm run test:e2e`).
 - CI on GitHub: green (Ubuntu: all tests; Windows: tests + installer). CI was red for a while after Part 2.3
   (an old test got confused because new games show twice in the Store). Fixed; CI now runs once per push.
 - PR: https://github.com/TheZerotje/zero-launcher-channel/pull/1 (draft, not merged).
 - Installer: PR #1 > Checks > CI (newest run) > Artifacts > **ZeroLauncherSetup**.
 
 ## Your next step
-Install the launcher from the CI artifact on your PC, open **My projects**, and fix the folder paths that show red.
+Install the launcher from the CI artifact on your PC, open **My projects**, and press **Pick folder** on every
+folder that shows red. Then press **Save a backup** in Settings once.

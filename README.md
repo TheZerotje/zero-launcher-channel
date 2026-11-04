@@ -3,16 +3,17 @@
 One desktop app (Windows) for all of Zero's games, a bit like Steam.
 
 - **Player**: Store (search, filters, New / Recently updated / Coming soon), News, Library, Zero's Arcade
-  (website games inside), Settings, Help. PC games install, are checked (SHA-256) and update by themselves.
+  (website games inside), Settings, Help, My reports. Continue playing, play time + badges, a welcome box on the
+  first start, back up / load launcher data, a launcher log, and one-button launcher updates. PC games install, are checked (SHA-256) and update by themselves.
   Works offline with the games from last time. Desktop shortcuts, launch options, move a game to another disk,
   download speed limit, start with Windows (in the tray), text size, easy font, Dutch.
 - **Tester**: same app. Makes an account in Settings (ID like `SAM-4F2A-9C1B`), Zero ticks which games they may
-  test. Gets test versions of only those games, with a "What to test" note, quick 👍/👎 feedback and a crash
+  test. Gets test versions of only those games, with a "What to test" note, 1-5 star feedback with one line (Zero pastes it in Testers) and a crash
   report that is shown before it is saved.
 - **Developer** (Zero's PC, `developer.json` in the app data folder): My projects (every project with exact status, git,
   last build, Don't forget, scrap + Scrapped page, quick review, status report), This week (goals + to-dos, new plan every Friday 12:00), Publish (Unreleased -> Testers ->
   Everyone -> Upload, Go back, Export from Godot, release checklist, news, game page info, download numbers,
-  Discord preview), Testers, Friend games (Approve), AI helper (`claude, ...` / `codex, ...` / `chatgpt, ...`),
+  Discord preview, launcher update), Testers (+ all tester feedback), Friend games (Approve), AI helper (`claude, ...` / `codex, ...` / `chatgpt, ...`),
   Website & host (website status only, key backup). Ctrl+K finds any game or page.
 - **Friend host** (`friend.json`): makes a signed `.zlsub` game file to send to Zero. See docs/HOW_TO_FRIEND.md.
 
