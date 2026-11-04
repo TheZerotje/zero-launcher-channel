@@ -299,3 +299,14 @@ test('weekly plan: Friday 12:00 weeks, suggestions from games', () => {
   assert.equal(c2.key, '2026-11-06');
   assert.equal(c2.history[0].done, 1);
 });
+
+test('developer sees pulled versions in the list, but never gets them as current', () => {
+  const { playerView: pv, currentRelease: cr } = require('../core/catalogue');
+  const cat = { format: 1, games: [{ id: 'gamex', kind: 'pc', releases: [
+    { version: '1.0', state: 'released' }, { version: '1.1', state: 'pulled' }] }] };
+  const dev = pv(cat, { role: 'developer' });
+  assert.deepEqual(dev.games[0].releases.map((r) => r.version), ['1.0', '1.1']);
+  assert.equal(cr(cat.games[0], { role: 'developer' }).version, '1.0');
+  const user = pv(cat, { role: 'user' });
+  assert.deepEqual(user.games[0].releases.map((r) => r.version), ['1.0']);
+});

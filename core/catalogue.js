@@ -59,7 +59,7 @@ function currentRelease(game, viewer) {
   return rel[0] || null;
 }
 
-// What a viewer is allowed to see.
+// What a viewer is allowed to see. The developer also sees pulled versions (to know what went back).
 function playerView(cat, viewer) {
   const dev = (typeof viewer === 'string' ? viewer : viewer && viewer.role) === 'developer';
   return {
@@ -67,7 +67,7 @@ function playerView(cat, viewer) {
     testers: dev ? cat.testers : undefined,
     games: cat.games
       .filter((g) => dev || !g.hidden)
-      .map((g) => ({ ...g, releases: (g.releases || []).filter((r) => statesFor(g, viewer).includes(r.state)) }))
+      .map((g) => ({ ...g, releases: (g.releases || []).filter((r) => (dev && r.state === 'pulled') || statesFor(g, viewer).includes(r.state)) }))
       .filter((g) => g.kind === 'web' || g.releases.length > 0),
   };
 }

@@ -15,3 +15,13 @@ Zero was asleep. When something was unclear I picked the safest simple option an
 4. **Website: status only.** The old code could start the website (button + "autoStart" on launch).
    The rules say: never start the website by itself, status only. I removed both. The Website page now
    only shows if the website is up.
+5. **Tests only "release" inside throwaway demo channels.** The plan asks for an app test of
+   "add version -> testers -> release -> go back". The rule says never press Release. I read that rule as
+   "never release to real players". So the tests make a fresh demo channel in the temp folder, release there,
+   and delete nothing real. No test ever talks to GitHub or the real channel.
+6. **Developer now sees pulled ("gone back") versions** in Publish, so Zero can see what was pulled.
+   Players and testers still never see or get them.
+7. **Branch name.** Zero asked for `overnight-<date>`, so the branch is `overnight-2026-11-04` and PR #1.
+   The PR is a draft until the end. It is never merged by me.
+8. **Fake game for app tests** is a tiny shell script named Game.exe (the app tests run on Linux in CI).
+   Zip files do not keep the "may run" flag, so the test sets it after install. The app code is not changed for this.
