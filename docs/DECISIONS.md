@@ -59,3 +59,13 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     index file).
 21. **Two tests are skipped on Windows CI only**: the Godot export tests use a fake Godot that is a shell script.
     They run on the Linux CI. This is not to hide a failure.
+22. **Every IPC call has an input check** (app/main.js `CHECKS`, helpers in core/validate.js). A call with no
+    check is refused, so a new IPC call can't be added without one. Objects from the screen are copied field by
+    field (no extra fields pass through).
+23. **AI helper on Windows: typed text is now escaped** (core/proc.js). Before, the task text went through
+    cmd.exe without quotes, so `&` or `|` in a task could run another command, and spaces split the text.
+    Now every argument is quoted and escaped (cross-spawn rules). A test runs a real .cmd tool on the Windows CI
+    with nasty text and checks that nothing runs.
+24. **Web game windows** may only use full screen and mouse lock (no camera, microphone, location, notifications).
+    They cannot attach webviews. ChatGPT window got the same rules and sends outside links to the normal browser.
+25. **Website status check now works with https addresses too** (it only knew http before).

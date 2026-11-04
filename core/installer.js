@@ -13,6 +13,7 @@ const { downloadTo } = require('./net');
 const { sha256File } = require('./hash');
 const { unpack } = require('./zip');
 const { resolveFileUrl, ID_RE } = require('./catalogue');
+const { writeJsonAtomic } = require('./fsutil');
 
 class Installer {
   constructor(root) {
@@ -30,9 +31,7 @@ class Installer {
   }
 
   _save(state) {
-    const tmp = this.stateFile + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-    fs.renameSync(tmp, this.stateFile);
+    writeJsonAtomic(this.stateFile, state);
   }
 
   // Free space on the disk that holds the games (bytes). Can be replaced in tests.

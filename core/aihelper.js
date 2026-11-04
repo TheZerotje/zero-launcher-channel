@@ -2,10 +2,12 @@
 // DEVELOPER ONLY: "claude, do X" / "codex, do Y" / "chatgpt, do Y".
 // Runs the AI tool that is already installed on Zero's PC, signed in with Zero's own
 // account (Claude Code: `claude -p`, Codex: `codex exec`). Nothing goes through us.
-const { spawn, execFile } = require('child_process');
+const { execFile } = require('child_process');
+const { spawnSafe } = require('./proc');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { writeJsonAtomic } = require('./fsutil');
 
 const RULES = [
   'You are working for Zero from the Zero Launcher.',
@@ -74,9 +76,10 @@ class AiHelper {
     const id = `${Date.now()}-${++this.n}`;
     const dir = path.join(this.logRoot, id);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ ...p, cwd, startedAt: new Date().toISOString() }, null, 2));
+    writeJsonAtomic(path.join(dir, 'job.json'), { ...p, cwd, startedAt: new Date().toISOString() });
     const log = fs.createWriteStream(path.join(dir, 'output.jsonl'));
-    const child = spawn(cmd, args, { cwd, windowsHide: true, shell: process.platform === 'win32', env: { ...process.env, CODEX_BRIDGE_NO_CUA: '1' } });
+    // spawnSafe: typed text can never run other commands (see core/proc.js).
+    const child = spawnSafe(cmd, args, { cwd, windowsHide: true, env: { ...process.env, CODEX_BRIDGE_NO_CUA: '1' } });
     try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
     this.jobs.set(id, child);
     let buf = '';
@@ -94,7 +97,7 @@ class AiHelper {
     child.on('error', (e) => onLine(`Could not start ${p.tool}: ${e.message}. Is it installed and signed in?`));
     child.on('close', (code) => {
       this.jobs.delete(id); log.end();
-      try { fs.writeFileSync(path.join(dir, 'end.json'), JSON.stringify({ code, endedAt: new Date().toISOString() })); } catch {}
+      try { writeJsonAtomic(path.join(dir, 'end.json'), { code, endedAt: new Date().toISOString() }); } catch {}
       onEnd && onEnd(code);
     });
     return { id, tool: p.tool, task: p.task };

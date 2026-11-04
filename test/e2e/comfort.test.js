@@ -98,6 +98,8 @@ test('report a problem makes a file with the game info', async () => {
     const text = fs.readFileSync(path.join(dir, files[0]), 'utf8');
     assert.match(text, /Game: Railrove/); assert.match(text, /The train fell off the map/);
     const bad = await win.evaluate(() => window.zl.call('report', '../../x', 'hi').then(() => 'ok', (e) => e.message));
-    assert.match(bad, /Game not found/);
+    assert.match(bad, /Bad input: game id/);
+    const unknown = await win.evaluate(() => window.zl.call('report', 'no-such-game', 'hi').then(() => 'ok', (e) => e.message));
+    assert.match(unknown, /Game not found/);
   } finally { await close(app); }
 });

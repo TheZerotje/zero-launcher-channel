@@ -31,8 +31,8 @@ const DEFAULTS = {
 if (process.env.ZL_USER_DATA) app.setPath('userData', process.env.ZL_USER_DATA);
 const DATA = () => app.getPath('userData');
 const file = (n) => path.join(DATA(), n);
-const readJson = (f, d = null) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
-const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2)); };
+const { readJson, writeJsonAtomic: writeJson, writeFileAtomic } = require('../core/fsutil'); // all JSON writes are atomic
+const { V } = require('../core/validate');
 
 let win = null, tray = null, installer = null, ai = null, lastHub = null;
 let catalogue = null, catalogueError = null, lastCheck = null;
@@ -196,7 +196,10 @@ function openWebGame(url, title) {
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:arcade' },
   });
   if (MUTED) w.webContents.setAudioMuted(true);
-  const origin = new URL(url).origin;
+  const u0 = new URL(url);
+  if (!['http:', 'https:'].includes(u0.protocol)) { w.destroy(); throw new Error('Bad web address'); }
+  const origin = u0.origin;
+  w.webContents.on('will-attach-webview', (e) => e.preventDefault());
   w.webContents.setWindowOpenHandler(({ url: u }) => { if (/^https:\/\//.test(u)) shell.openExternal(u); return { action: 'deny' }; });
   w.webContents.on('will-navigate', (e, u) => { if (new URL(u).origin !== origin) { e.preventDefault(); if (/^https:\/\//.test(u)) shell.openExternal(u); } });
   w.loadURL(url).catch(() => w.loadFile(path.join(__dirname, 'renderer', 'offline.html')));
@@ -229,7 +232,7 @@ const api = {
     const dir = path.join(DATA(), 'reports');
     fs.mkdirSync(dir, { recursive: true });
     const out = path.join(dir, `${id}-${Date.now()}.txt`);
-    fs.writeFileSync(out, body);
+    writeFileAtomic(out, body);
     return { file: out, text: body };
   },
   uninstall: async (id) => {
@@ -287,6 +290,7 @@ const api = {
   },
   devWeekResuggest: (k) => {
     const store = readJson(file('weekly.json'), {});
+    if (!store.weeks || !store.weeks[k]) throw new Error('Unknown week');
     const s = weekly.suggest(api.devHub(), (developer().weekly || {}).focus);
     store.weeks[k] = { ...store.weeks[k], ...s, confirmed: false };
     writeJson(file('weekly.json'), store); return api.devWeek();
@@ -295,8 +299,8 @@ const api = {
     if (!lastHub || !lastHub.games.some((g) => g.folder === folder)) throw new Error('Unknown folder');
     return shell.openPath(folder);
   },
-  devAddGame: (g) => { devChannel().upsertGame(g); return refresh(); },
-  devAddVersion: async (o) => { const r = await devChannel().addPcRelease(o); await refresh(); return r; },
+  devAddGame: (g) => { devChannel().upsertGame({ id: g.id, name: g.name, kind: g.kind, url: g.url, image: g.image || '', description: g.description || '' }); return refresh(); },
+  devAddVersion: async (o) => { const r = await devChannel().addPcRelease({ gameId: o.gameId, buildDir: o.buildDir, version: o.version, notes: o.notes || '' }); await refresh(); return r; },
   devPickFolder: async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0]; },
   devPickFile: async () => { const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Friend game', extensions: ['zlsub'] }] }); return r.canceled ? null : r.filePaths[0]; },
   devToTesters: (id, v) => { devChannel().toTesters(id, v); return refresh(); },
@@ -312,7 +316,7 @@ const api = {
     devChannel().goBack(id); return refresh();
   },
   devHide: (id, hidden) => { devChannel().setHidden(id, hidden); return refresh(); },
-  devSetTester: (o) => { devChannel().setTester(o); return refresh(); },
+  devSetTester: (o) => { devChannel().setTester({ accountId: o.accountId, name: o.name, games: o.games || [] }); return refresh(); },
   devRemoveTester: (id) => { devChannel().removeTester(id); return refresh(); },
   devUpload: async () => {
     const d = developer();
@@ -352,7 +356,7 @@ const api = {
     return app.getLoginItemSettings().openAtLogin;
   },
   devFriends: () => { const inbox = new FriendInbox(developer().friendsDir); return { friends: inbox.friends(), waiting: inbox.waiting() }; },
-  devAddFriend: (o) => new FriendInbox(developer().friendsDir).addFriend(o),
+  devAddFriend: (o) => new FriendInbox(developer().friendsDir).addFriend({ friendId: o.friendId, name: o.name, publicKeyPem: o.publicKeyPem, games: o.games || [] }),
   devBlockFriend: (id, b) => new FriendInbox(developer().friendsDir).setBlocked(id, b),
   devImportSubmission: (f) => new FriendInbox(developer().friendsDir).importSubmission(f),
   devApprove: async (id) => { const r = await new FriendInbox(developer().friendsDir).approve(id, devChannel()); await refresh(); return r; },
@@ -374,7 +378,8 @@ const api = {
     return api.devAiStart(`${old.said || old.tool}, ${old.task}`, old.cwd);
   },
   devChatGPT: () => {
-    const w = new BrowserWindow({ width: 1100, height: 850, title: 'ChatGPT', autoHideMenuBar: true, webPreferences: { sandbox: true, partition: 'persist:chatgpt' } });
+    const w = new BrowserWindow({ width: 1100, height: 850, title: 'ChatGPT', autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:chatgpt' } });
+    w.webContents.setWindowOpenHandler(({ url: u }) => { if (/^https:\/\//.test(u)) shell.openExternal(u); return { action: 'deny' }; });
     w.loadURL('https://chatgpt.com/'); return true;
   },
 
@@ -383,22 +388,69 @@ const api = {
     const f = friendHost();
     if (!f) throw new Error('Not a friend host');
     const keyFile = file('friend-private.pem');
-    if (!fs.existsSync(keyFile)) { const k = generateKeyPair(); fs.writeFileSync(keyFile, k.privateKey); fs.writeFileSync(file('friend-public.pem'), k.publicKey); }
+    if (!fs.existsSync(keyFile)) { const k = generateKeyPair(); writeFileAtomic(keyFile, k.privateKey, { mode: 0o600 }); writeFileAtomic(file('friend-public.pem'), k.publicKey); }
     return fs.readFileSync(file('friend-public.pem'), 'utf8');
   },
   friendPickFolder: async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0]; },
   friendSubmit: async (o) => {
     const f = friendHost();
-    const out = await makeSubmission({ ...o, friendId: f.friendId, privateKeyPem: fs.readFileSync(file('friend-private.pem'), 'utf8'), outDir: path.join(DATA(), 'to-send') });
+    const out = await makeSubmission({ gameId: o.gameId, gameName: o.gameName, version: o.version, notes: o.notes || '', buildDir: o.buildDir, friendId: f.friendId, privateKeyPem: fs.readFileSync(file('friend-private.pem'), 'utf8'), outDir: path.join(DATA(), 'to-send') });
     shell.showItemInFolder(out); return out;
   },
 };
 
+// ---------------- IPC input checks ----------------
+// Every IPC call has a check here. A call without a check is refused (safe default).
+const none = (args) => { if (args.length) throw new Error('Bad input'); };
+const gid = ([id, ...rest]) => { V.gameId(id); if (rest.length) throw new Error('Bad input'); };
+const gidVer = ([id, v, ...rest]) => { V.gameId(id); V.version(v); if (rest.length) throw new Error('Bad input'); };
+const AI_ID = /^\d{10,16}-\d{1,6}$/;
+const SUB_ID = /^[a-z0-9][a-z0-9-]{1,40}--[a-z0-9][a-z0-9-]{1,40}--v?[0-9A-Za-z.-]{1,40}$/;
+const CHECKS = {
+  state: none, refresh: none, openArcade: none, devHub: none, devWeek: none, devPickFolder: none, devPickFile: none,
+  devUpload: none, devGodotProjects: none, devWebsite: none, devFriends: none, devAiFolders: none, devAiHistory: none,
+  devChatGPT: none, friendMakeKeys: none, friendPickFolder: none,
+  install: gid, repair: gid, pause: gid, resume: gid, cancel: gid, uninstall: gid, play: gid, devGoBack: gid,
+  devToTesters: gidVer, devRelease: gidVer, devUnrelease: gidVer,
+  report: ([id, text]) => { V.gameId(id); V.str(text, 'report text', 2000, { allowEmpty: false }); },
+  setSetting: ([k]) => V.str(k, 'setting', 40),
+  makeAccount: ([name]) => V.str(name, 'name', 32, { allowEmpty: false }),
+  copy: ([text]) => V.str(text, 'text', 20000),
+  devHubMark: ([id, mark]) => { V.match(id, /^[a-z0-9][a-z0-9-]{0,60}$/, 'game id'); V.obj(mark, 'mark'); },
+  devWeekSave: ([k, week]) => { V.match(k, /^\d{4}-\d{2}-\d{2}$/, 'week'); V.obj(week, 'week'); },
+  devWeekResuggest: ([k]) => V.match(k, /^\d{4}-\d{2}-\d{2}$/, 'week'),
+  devOpenFolder: ([f]) => V.str(f, 'folder', 1000, { allowEmpty: false }),
+  devAddGame: ([g]) => {
+    V.obj(g, 'game'); V.gameId(g.id); V.str(g.name, 'name', 80, { allowEmpty: false }); V.oneOf(g.kind, ['pc', 'web'], 'type');
+    V.url(g.url, 'web address', { optional: g.kind !== 'web' }); V.url(g.image, 'picture address', { httpsOnly: true });
+    V.optStr(g.description, 'short text', 500);
+  },
+  devAddVersion: ([o]) => { V.obj(o); V.gameId(o.gameId); V.dir(o.buildDir, 'build folder'); V.version(o.version); V.optStr(o.notes, "what's new", 300); },
+  devHide: ([id, hidden]) => { V.gameId(id); V.bool(hidden); },
+  devSetTester: ([o]) => { V.obj(o); V.str(o.accountId, 'account ID', 20); V.optStr(o.name, 'name', 32); V.list(o.games || [], 'games').forEach(V.gameId); },
+  devRemoveTester: ([id]) => V.str(id, 'account ID', 20),
+  devGodotExport: ([id, v, notes]) => { V.gameId(id); V.str(v, 'version', 40); if (v.trim()) V.version(v); V.optStr(notes, "what's new", 300); },
+  devAutoStart: ([on]) => { if (on !== undefined) V.bool(on); },
+  devAddFriend: ([o]) => { V.obj(o); V.gameId(o.friendId); V.str(o.name, 'name', 40); V.str(o.publicKeyPem, 'public key', 2000, { allowEmpty: false }); V.list(o.games || [], 'games', 20).forEach(V.gameId); },
+  devBlockFriend: ([id, b]) => { V.gameId(id); V.bool(b); },
+  devImportSubmission: ([f]) => V.file(f, 'friend game file', '.zlsub'),
+  devApprove: ([id]) => V.match(id, SUB_ID, 'waiting id'),
+  devReject: ([id]) => V.match(id, SUB_ID, 'waiting id'),
+  devAiStart: ([text, cwd]) => { V.str(text, 'task', 4000, { allowEmpty: false }); V.str(cwd, 'folder', 1000, { allowEmpty: false }); },
+  devAiStop: ([id]) => V.match(id, AI_ID, 'job id'),
+  devAiLog: ([id]) => V.match(id, AI_ID, 'job id'),
+  devAiOpenLog: ([id]) => V.match(id, AI_ID, 'job id'),
+  devAiRerun: ([id]) => V.match(id, AI_ID, 'job id'),
+  friendSubmit: ([o]) => { V.obj(o); V.gameId(o.gameId); V.str(o.gameName, 'game name', 80); V.version(o.version); V.optStr(o.notes, "what's new", 300); V.dir(o.buildDir, 'build folder'); },
+};
+
 for (const [name, fn] of Object.entries(api)) {
   ipcMain.handle('zl:' + name, async (e, ...args) => {
-    if (e.senderFrame !== win.webContents.mainFrame) throw new Error('Not allowed');
+    if (!win || e.senderFrame !== win.webContents.mainFrame) throw new Error('Not allowed');
     if (name.startsWith('dev') && !developer()) throw new Error('Developer only');
     if (name.startsWith('friend') && !friendHost()) throw new Error('Friend host only');
+    if (!CHECKS[name]) throw new Error('Not allowed');
+    CHECKS[name](args);
     return fn(...args);
   });
 }
@@ -411,6 +463,7 @@ function createWindow(hidden) {
   });
   if (MUTED) win.webContents.setAudioMuted(true);
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html')); // Version 1 look only
   win.on('close', (e) => { if (developer() && !app.isQuitting) { e.preventDefault(); win.hide(); } });
@@ -427,10 +480,19 @@ function createTray() {
   tray.on('click', () => { win.show(); win.focus(); });
 }
 
+// Web games may NOT use camera, microphone, location, notifications, etc. Only full screen and mouse lock.
+function lockDownSession(ses) {
+  const ok = new Set(['fullscreen', 'pointerLock', 'clipboard-sanitized-write']);
+  ses.setPermissionRequestHandler((_wc, permission, cb) => cb(ok.has(permission)));
+  ses.setPermissionCheckHandler((_wc, permission) => ok.has(permission));
+}
+
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (win) { win.show(); win.focus(); } });
   app.whenReady().then(async () => {
+    const { session } = require('electron');
+    for (const part of ['persist:arcade', 'persist:chatgpt']) lockDownSession(session.fromPartition(part));
     const s = settings();
     installer = new Installer(s.installRoot || path.join(DATA(), 'library'));
     queue = new DownloadQueue(runInstall, () => send('state', state()));

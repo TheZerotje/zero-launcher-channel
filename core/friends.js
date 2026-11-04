@@ -9,11 +9,13 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { sign, verify, fingerprint } = require('./signing');
 const { sha256File } = require('./hash');
 const { packFolder, unpack, listFiles } = require('./zip');
 const versions = require('./versions');
 const { ID_RE } = require('./catalogue');
+const { writeJsonAtomic, writeFileAtomic } = require('./fsutil');
 
 // ---------- friend side ----------
 async function makeSubmission({ friendId, privateKeyPem, gameId, gameName, version, notes = '', exe, buildDir, outDir }) {
@@ -51,12 +53,15 @@ class FriendInbox {
     fs.mkdirSync(this.waitDir, { recursive: true });
   }
   friends() { try { return JSON.parse(fs.readFileSync(this.friendsFile, 'utf8')); } catch { return {}; } }
-  _saveFriends(f) { fs.writeFileSync(this.friendsFile, JSON.stringify(f, null, 2)); }
+  _saveFriends(f) { writeJsonAtomic(this.friendsFile, f); }
 
   addFriend({ friendId, name, publicKeyPem, games }) {
     if (!ID_RE.test(friendId)) throw new Error('Friend id: small letters, numbers and - only');
+    try { crypto.createPublicKey(publicKeyPem); } catch { throw new Error('That public key looks wrong. Ask your friend to copy it again.'); }
+    const list = (games || []).filter((g) => ID_RE.test(g));
+    if (list.length !== (games || []).length) throw new Error('Game id: small letters, numbers and - only');
     const f = this.friends();
-    f[friendId] = { name, publicKey: publicKeyPem, fingerprint: fingerprint(publicKeyPem), games: games || [], blocked: false };
+    f[friendId] = { name: String(name || friendId).slice(0, 40), publicKey: publicKeyPem, fingerprint: fingerprint(publicKeyPem), games: list, blocked: false };
     this._saveFriends(f);
     return f[friendId];
   }
@@ -87,7 +92,7 @@ class FriendInbox {
       fs.rmSync(dest, { recursive: true, force: true });
       fs.mkdirSync(dest, { recursive: true });
       fs.copyFileSync(pkg, path.join(dest, 'package.zip'));
-      fs.writeFileSync(path.join(dest, 'submission.json'), bytes);
+      writeFileAtomic(path.join(dest, 'submission.json'), bytes);
       return { id, ...meta, friendName: friend.name };
     } finally {
       fs.rmSync(work, { recursive: true, force: true });

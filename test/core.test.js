@@ -471,3 +471,73 @@ test('AI helper: past jobs list, status and log', () => {
   assert.throws(() => ai.logFile('../../etc'), /Bad job id/);
   assert.throws(() => ai.logFile('1762000009999-9'), /No log/);
 });
+
+test('every IPC call has an input check, and checks refuse bad input', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'main.js'), 'utf8');
+  const apiBlock = src.slice(src.indexOf('const api = {'), src.indexOf('// ---------------- IPC input checks'));
+  const names = [...apiBlock.matchAll(/^ {2}([a-zA-Z]+): /gm)].map((m) => m[1]);
+  const checkBlock = src.slice(src.indexOf('const CHECKS = {'), src.indexOf('for (const [name, fn] of Object.entries(api))'));
+  const missing = names.filter((n) => !new RegExp(`\\b${n}:`).test(checkBlock));
+  assert.ok(names.length > 40, 'found the api list');
+  assert.deepEqual(missing, []);
+  assert.match(src, /if \(!CHECKS\[name\]\) throw new Error\('Not allowed'\)/, 'calls without a check are refused');
+  const { V } = require('../core/validate');
+  assert.throws(() => V.gameId('../etc'), /Bad input/);
+  assert.throws(() => V.gameId(5), /Bad input/);
+  assert.throws(() => V.version('1.0; rm -rf'), /Bad input/);
+  assert.throws(() => V.str('x'.repeat(301)), /Bad input/);
+  assert.throws(() => V.url('javascript:alert(1)'), /Bad input/);
+  assert.throws(() => V.url('http://x', 'pic', { httpsOnly: true }), /Bad input/);
+  assert.throws(() => V.dir('relative/path'), /Bad input/);
+  assert.throws(() => V.dir(path.join(tmp(), 'nope')), /not found/);
+  assert.throws(() => V.file(__filename, 'f', '.zlsub'), /Bad input/);
+  assert.equal(V.gameId('railrove'), 'railrove');
+  assert.equal(V.version(' 0.20.0 '), '0.20.0');
+  assert.equal(V.url(''), '');
+});
+
+test('atomic JSON writes leave no temp files and replace the old file', () => {
+  const { writeJsonAtomic, readJson } = require('../core/fsutil');
+  const dir = tmp();
+  const f = path.join(dir, 'a', 'x.json');
+  writeJsonAtomic(f, { a: 1 });
+  writeJsonAtomic(f, { a: 2 });
+  assert.deepEqual(readJson(f), { a: 2 });
+  assert.deepEqual(fs.readdirSync(path.dirname(f)), ['x.json']);
+  // no direct writeFileSync of JSON files left in main.js / core (except temp work folders)
+  const main = fs.readFileSync(path.join(__dirname, '..', 'app', 'main.js'), 'utf8');
+  assert.doesNotMatch(main, /fs\.writeFileSync\(/);
+});
+
+test('friends: a bad public key or bad game id is refused', () => {
+  const inbox = new FriendInbox(tmp());
+  assert.throws(() => inbox.addFriend({ friendId: 'sam', name: 'Sam', publicKeyPem: 'hello', games: ['x-game'] }), /public key looks wrong/);
+  const k = generateKeyPair();
+  assert.throws(() => inbox.addFriend({ friendId: 'sam', name: 'Sam', publicKeyPem: k.publicKey, games: ['../x'] }), /Game id/);
+  assert.ok(inbox.addFriend({ friendId: 'sam', name: 'Sam', publicKeyPem: k.publicKey, games: ['x-game'] }));
+});
+
+test('safe start: typed text never becomes a command', async () => {
+  const { escapeWinArg, spawnSafe } = require('../core/proc');
+  assert.equal(escapeWinArg('a b', false), '^"a^ b^"');
+  assert.match(escapeWinArg('x & del *', true), /\^\^&/);
+  // Real run: a tool that prints its arguments. On Windows it is a .cmd file (needs cmd.exe).
+  const dir = tmp();
+  const printer = path.join(dir, 'printargs.js');
+  fs.writeFileSync(printer, 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
+  let cmd;
+  if (process.platform === 'win32') {
+    cmd = path.join(dir, 'tool.cmd');
+    fs.writeFileSync(cmd, `@"${process.execPath}" "${printer}" %*\r\n`);
+  } else {
+    cmd = path.join(dir, 'tool.sh');
+    fs.writeFileSync(cmd, `#!/bin/sh\nexec "${process.execPath}" "${printer}" "$@"\n`, { mode: 0o755 });
+  }
+  const nasty = ['fix the jump & echo HACKED > hacked.txt', 'say "hi" | more', '100% (done) ^ <ok>', 'C:\\path\\', 'a;b,c'];
+  const out = await new Promise((resolve, reject) => {
+    const c = spawnSafe(cmd, nasty, { cwd: dir });
+    let o = ''; c.stdout.on('data', (d) => { o += d; }); c.on('error', reject); c.on('close', () => resolve(o));
+  });
+  assert.deepEqual(JSON.parse(out), nasty);
+  assert.ok(!fs.existsSync(path.join(dir, 'hacked.txt')), 'no command ran');
+});
