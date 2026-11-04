@@ -121,8 +121,11 @@ details.launch summary,details.gameinfo summary{cursor:pointer;font-weight:600}
 details.gameinfo{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}details.gameinfo .form{margin-top:10px}
 /* ---- tester helpers ---- */
 .panel.testbox{background:#a66bff1f;border-color:#a66bff77}.panel.testbox h3{color:#cfb2ff}
-.vote{all:unset;cursor:pointer;font-size:30px;padding:6px 16px;border-radius:12px;background:var(--panel2);border:2px solid transparent}
-.vote.on{border-color:var(--accent);background:#3d7dff33}
+.star{all:unset;cursor:pointer;font-size:30px;line-height:1;padding:6px 10px;border-radius:12px;color:#5a6278;background:var(--panel2);border:2px solid transparent}
+.star.on{color:#ffc93d}.star:focus-visible{border-color:var(--accent)}
+.fb-group{margin-top:16px}.fb-group h4{margin:0 0 6px}.fb-avg{color:#ffc93d}
+.fb-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:6px 0;border-top:1px solid var(--line,#ffffff14)}
+.fb-stars{color:#ffc93d;letter-spacing:1px}.fb-text{overflow-wrap:anywhere}
 .panel.crash{border-color:#e5484d88;background:#e5484d14}
 .crash-text{max-height:260px}
 /* ---- pop-ups, command box ---- */

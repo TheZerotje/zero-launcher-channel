@@ -91,3 +91,56 @@ test('Continue playing: the games you played last are on top of the Store', asyn
     await shot(win, 'player-play-time');
   } finally { await close(app); }
 });
+
+test('tester feedback: stars + one line -> code; Zero pastes it in Testers and sees all feedback in one list', async () => {
+  const demo = makeDemo();
+  let { app, win, errors } = await launch(demo.player);
+  let report;
+  try {
+    await win.locator('.card b', { hasText: 'Railrove' }).first().click();
+    const box = win.locator('.panel.feedback');
+    await box.waitFor();
+    await box.locator('button', { hasText: 'Send feedback' }).click();
+    await win.locator('.toast', { hasText: 'Press a star first' }).waitFor();
+    await box.locator('.star[data-v="3"]').click();
+    assert.equal(await box.locator('.star.on').count(), 3, 'stars 1-3 light up');
+    assert.equal(await win.locator('#fb-text').getAttribute('maxlength'), '200');
+    await win.fill('#fb-text', 'Night sky is too dark');
+    await box.locator('button', { hasText: 'Send feedback' }).click();
+    await win.locator('.toast', { hasText: 'Feedback saved' }).waitFor();
+    report = await app.evaluate(({ clipboard }) => clipboard.readText());
+    assert.match(report, /★★★☆☆ \(3 of 5\)\nNight sky is too dark[\s\S]*ZLFB1:/);
+    await shot(win, 'tester-feedback-stars');
+    // hack: bad stars, long text, extra args
+    for (const args of [[0, ''], [6, ''], ['5', ''], [5, 'x'.repeat(201)], [5, '', 'extra']]) {
+      assert.match(await tryCall(win, 'feedback', 'railrove', ...args), /Bad input/, JSON.stringify(args));
+    }
+    // a tester can not use Zero's list
+    assert.match(await tryCall(win, 'devFeedbackAdd', report), /Developer only|Not allowed/);
+    assert.match(await tryCall(win, 'devFeedback'), /Developer only|Not allowed/);
+    assert.deepEqual(errors, []);
+  } finally { await close(app); }
+  ({ app, win, errors } = await launch(demo.dev));
+  try {
+    await goto(win, 'Testers');
+    const list = win.locator('.panel.fb-list');
+    await list.locator('.empty', { hasText: 'No feedback yet' }).waitFor();
+    await win.fill('#fb-paste', 'hello, nothing here');
+    await list.locator('button', { hasText: 'Add feedback' }).click();
+    await win.locator('.toast', { hasText: 'No feedback code found' }).waitFor();
+    await win.fill('#fb-paste', `Hi Zero, here you go:\n${report}`);
+    await list.locator('button', { hasText: 'Add feedback' }).click();
+    await win.locator('.toast', { hasText: 'Added 1 feedback' }).waitFor();
+    const grp = win.locator('.fb-group').first();
+    await grp.waitFor();
+    assert.match(await grp.textContent(), /Railrove v0\.20\.0.*★ 3 of 5.*1 feedback.*Night sky is too dark/);
+    await win.fill('#fb-paste', report);
+    await list.locator('button', { hasText: 'Add feedback' }).click();
+    await win.locator('.toast', { hasText: 'Already in the list' }).waitFor();
+    assert.equal(JSON.parse(fs.readFileSync(path.join(demo.dev, 'feedback.json'), 'utf8')).length, 1);
+    await shot(win, 'dev-tester-feedback');
+    await grp.locator('button', { hasText: 'Remove' }).click();
+    await list.locator('.empty', { hasText: 'No feedback yet' }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally { await close(app); }
+});

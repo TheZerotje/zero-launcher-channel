@@ -126,13 +126,13 @@ test('tester helpers: what to test (purple box), quick feedback, crash report sh
     const box = win.locator('.testbox');
     await box.waitFor();
     assert.match(await box.textContent(), /Try the new bridge/);
-    await win.locator('.vote[data-v="up"]').click();
+    await win.locator('.star[data-v="4"]').click();
     await win.fill('#fb-text', 'Bridge feels great');
     await win.locator('button', { hasText: 'Send feedback' }).click();
     await win.locator('.toast', { hasText: 'Feedback saved' }).waitFor();
     await shot(win, 'tester-game-page');
     const rep = fs.readdirSync(path.join(demo.player, 'reports'));
-    assert.match(fs.readFileSync(path.join(demo.player, 'reports', rep[0]), 'utf8'), /Test feedback for version 0\.20\.0: 👍[\s\S]*Bridge feels great/);
+    assert.match(fs.readFileSync(path.join(demo.player, 'reports', rep[0]), 'utf8'), /Test feedback for version 0\.20\.0: ★★★★☆ \(4 of 5\)\nBridge feels great[\s\S]*ZLFB1:/);
     // install + crash
     await win.locator('.game-info button', { hasText: 'Install' }).click();
     await win.locator('.game-info button', { hasText: 'Play' }).waitFor({ timeout: 20000 });
@@ -162,7 +162,7 @@ test('tester helpers: what to test (purple box), quick feedback, crash report sh
     await win.locator('.card b', { hasText: 'Railrove' }).first().click();
     await win.locator('h1', { hasText: 'Railrove' }).waitFor();
     assert.equal(await win.locator('.feedback').count(), 0);
-    const r = await win.evaluate(() => window.zl.call('feedback', 'railrove', 'up', '').then(() => 'ok', (e) => e.message));
+    const r = await win.evaluate(() => window.zl.call('feedback', 'railrove', 4, '').then(() => 'ok', (e) => e.message));
     assert.match(r, /only for test versions/);
   } finally { await close(app); }
 });

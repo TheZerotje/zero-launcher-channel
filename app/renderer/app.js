@@ -169,20 +169,19 @@ function newsBlock() {
 
 // ---------------- tester feedback + crash reports ----------------
 function feedbackBox(g) {
-  let vote = null;
-  const pick = (v) => (e) => { vote = v; e.target.closest('.feedback').querySelectorAll('.vote').forEach((b) => b.classList.toggle('on', b.dataset.v === v)); };
+  let stars = 0;
+  const pick = (n) => (e) => { stars = n; e.target.closest('.feedback').querySelectorAll('.star').forEach((b) => { b.classList.toggle('on', +b.dataset.v <= n); b.setAttribute('aria-pressed', String(+b.dataset.v === n)); }); };
   return h('div', { class: 'panel feedback' }, h('h3', {}, t('Quick feedback on this test version')),
-    h('div', { class: 'row' },
-      h('button', { class: 'vote', 'data-v': 'up', 'aria-label': t('Good'), onclick: pick('up') }, '👍'),
-      h('button', { class: 'vote', 'data-v': 'down', 'aria-label': t('Not good'), onclick: pick('down') }, '👎')),
-    h('textarea', { id: 'fb-text', maxlength: 2000, placeholder: t('Anything else? (you can leave this empty)'), style: 'margin-top:10px' }),
-    h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => {
-      if (!vote) return toast(t('Press 👍 or 👎 first.'), 'error');
-      const r = await call('feedback', g.id, vote, $('#fb-text').value.trim());
+    h('p', { class: 'dim' }, t('How good is this test version? Press a star.')),
+    h('div', { class: 'row stars' }, [1, 2, 3, 4, 5].map((n) => h('button', { class: 'star', 'data-v': n, 'aria-label': t('{n} of 5 stars', { n }), title: t('{n} of 5 stars', { n }), onclick: pick(n) }, '★'))),
+    h('input', { id: 'fb-text', maxlength: 200, placeholder: t('One line: what was good or bad? (you can leave this empty)'), style: 'margin-top:10px;display:block;width:100%;box-sizing:border-box' }),
+    h('div', {}, h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => {
+      if (!stars) return toast(t('Press a star first.'), 'error');
+      const r = await call('feedback', g.id, stars, $('#fb-text').value.trim());
       await call('copy', r.text);
       toast(t('Thank you! Feedback saved and copied. Send it to Zero.'));
       $('#fb-text').value = '';
-    } }, t('Send feedback')));
+    } }, t('Send feedback'))));
 }
 let crashText = {}; // gameId -> preview text
 function crashBanner() {
@@ -748,8 +747,31 @@ P['dev-testers'] = () => {
       h('button', { class: 'btn bad small', onclick: () => call('devRemoveTester', t.accountId).then(set) }, 'Remove')),
       h('div', { style: 'margin-top:10px' }, ticks('t-' + i, t.games)),
       h('button', { class: 'ghost small', style: 'margin-top:10px', onclick: () => call('devSetTester', { accountId: t.accountId, name: t.name, games: picked('t-' + i) }).then(set) }, 'Save games')))
-      : h('div', { class: 'empty' }, 'No testers yet.')];
+      : h('div', { class: 'empty' }, 'No testers yet.'), feedbackList()];
 };
+// All tester feedback in one list (kept on this PC only). Testers send you a code; paste it here.
+function feedbackList() {
+  const box = h('div', { class: 'panel fb-list' }, h('h3', {}, 'Tester feedback'),
+    h('p', { class: 'dim' }, 'Testers press a star and write one line. They send you the text. Paste it here (more than one is fine).'),
+    h('textarea', { id: 'fb-paste', placeholder: 'Paste feedback here (it has a code that starts with ZLFB1:)' }),
+    h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => {
+      const r = await call('devFeedbackAdd', $('#fb-paste').value);
+      toast(r.added ? `Added ${r.added} feedback` + (r.same ? ` (${r.same} already there)` : '') : r.same ? 'Already in the list' : 'No feedback code found', r.added || r.same ? '' : 'error');
+      if (r.added) render();
+    } }, 'Add feedback'));
+  const list = h('div', {}, h('p', { class: 'dim loading' }, 'Loading…'));
+  box.append(list);
+  call('devFeedback').then((groups) => {
+    list.innerHTML = '';
+    if (!groups.length) return list.append(h('div', { class: 'empty' }, 'No feedback yet.'));
+    groups.forEach((x) => list.append(h('div', { class: 'fb-group' },
+      h('h4', {}, `${x.name} v${x.version}  `, h('span', { class: 'fb-avg' }, `★ ${x.average} of 5`), h('span', { class: 'dim' }, `  · ${x.items.length} feedback`)),
+      x.items.map((e) => h('div', { class: 'fb-row' }, h('span', { class: 'fb-stars', title: `${e.s} of 5` }, '★'.repeat(e.s) + '☆'.repeat(5 - e.s)),
+        h('span', { class: 'fb-text' }, e.t || '(no words)'), h('span', { class: 'dim' }, `${e.who || e.a || 'no account'} · ${e.at.slice(0, 10)}`),
+        h('button', { class: 'ghost small', title: 'Remove this feedback', onclick: async () => { await call('devFeedbackRemove', e.at, e.a); render(); } }, 'Remove'))))));
+  }).catch(() => {});
+  return box;
+}
 P['dev-friends'] = () => {
   const box = h('div', {}, h('p', { class: 'dim loading' }, 'Loading…'));
   call('devFriends').then(({ friends, waiting }) => {

@@ -929,3 +929,27 @@ test('play time + badges: added up per game, capped per session, kept on this PC
   assert.equal(pt.pretty(30000), 'less than 1 min'); assert.equal(pt.pretty(135 * 60000), '2 h 15 min'); assert.equal(pt.pretty(15 * 60000), '15 min');
   assert.equal(({}).ms, undefined);
 });
+
+test('tester feedback: code round trip, bad or sneaky codes skipped, no doubles, average per version', () => {
+  const fb = require('../core/feedback');
+  const at = '2026-11-04T10:00:00.000Z';
+  const c1 = fb.makeCode({ g: 'railrove', v: '0.20.0', s: 4, t: 'Bridge  feels\ngreat', a: 'SAM-4F2A-9C1B', at });
+  const c2 = fb.makeCode({ g: 'railrove', v: '0.20.0', s: 2, t: '', a: '', at: '2026-11-04T11:00:00.000Z' });
+  assert.match(c1, /^ZLFB1:[A-Za-z0-9_-]+$/);
+  assert.deepEqual(fb.parse(`hi Zero!\n${c1}\nbye`).found, [{ g: 'railrove', v: '0.20.0', s: 4, t: 'Bridge feels great', a: 'SAM-4F2A-9C1B', at }]);
+  assert.throws(() => fb.makeCode({ g: 'railrove', v: '0.20.0', s: 6, at }), /Bad feedback/);
+  const evil = (o) => 'ZLFB1:' + Buffer.from(JSON.stringify(o)).toString('base64url');
+  const base = { g: 'railrove', v: '0.20.0', s: 3, t: '', a: '', at };
+  for (const bad of [{ ...base, s: 9 }, { ...base, s: '5' }, { ...base, g: '../x' }, { ...base, v: 'abc' }, { ...base, t: 'x'.repeat(201) },
+    { ...base, a: 'not an id' }, { ...base, at: 'yesterday' }, [1, 2, 3, 4, 5], JSON.parse('{"__proto__":{"admin":1}}')]) {
+    assert.deepEqual(fb.parse(evil(bad)), { found: [], bad: 1 }, JSON.stringify(bad));
+  }
+  assert.deepEqual(fb.parse('ZLFB1:!!!not-base64!!!').found, []);
+  const store = new fb.FeedbackStore(path.join(tmp(), 'feedback.json'));
+  assert.deepEqual(store.add(`${c1} ${c2} ${evil({ ...base, s: 0 })}`), { added: 2, same: 0, bad: 1 });
+  assert.deepEqual(store.add(c1), { added: 0, same: 1, bad: 0 }, 'no doubles');
+  const [grp] = store.grouped();
+  assert.equal(grp.average, 3); assert.equal(grp.items.length, 2); assert.equal(grp.items[0].s, 2, 'newest first');
+  assert.equal(store.remove(at, 'SAM-4F2A-9C1B'), 1); assert.equal(store.all().length, 1);
+  assert.equal(({}).admin, undefined);
+});

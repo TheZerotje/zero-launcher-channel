@@ -28,6 +28,7 @@ const discord = require('../core/discord');
 const keybackup = require('../core/keybackup');
 const projects = require('../core/projects');
 const playtime = require('../core/playtime');
+const feedback = require('../core/feedback');
 const CHECK_ITEMS = ['starts', 'sound', 'tested', 'notes', 'picture'];
 const CHECK_LABELS = { starts: 'The game starts', sound: 'No sound bugs', tested: 'Tested by a tester', notes: "What's new is written", picture: 'Picture is set' };
 let stats = null;
@@ -57,6 +58,7 @@ function settings() { return { ...DEFAULTS, ...readJson(file('settings.json'), {
 function developer() { return readJson(file('developer.json')); }
 function friendHost() { return readJson(file('friend.json')); }
 function account() { return readJson(file('account.json')); }
+const feedbackStore = () => new feedback.FeedbackStore(file('feedback.json'));
 function publicKey() {
   const s = settings();
   if (s.publicKeyFile && fs.existsSync(s.publicKeyFile)) return fs.readFileSync(s.publicKeyFile, 'utf8');
@@ -343,13 +345,15 @@ const api = {
     return { file: out, text };
   },
   crashDismiss: (id) => { crashes.delete(id); send('state', state()); return true; },
-  // Quick feedback on a TEST version: thumbs up / down + optional text. Saved like a report.
-  feedback: (id, vote, text) => {
+  // Quick feedback on a TEST version: 1-5 stars + one line. Saved like a report, with a code Zero can paste in Testers.
+  feedback: (id, stars, text) => {
     const g = catalogue && catalogue.games.find((x) => x.id === id);
     if (!g) throw new Error('Game not found');
     const rel = currentRelease(g, viewer());
     if (!rel || rel.state !== 'testing') throw new Error('Feedback is only for test versions');
-    return api.report(id, `Test feedback for version ${rel.version}: ${vote === 'up' ? '👍 good' : '👎 not good'}\n${String(text || '').slice(0, 2000)}`);
+    const line = feedback.oneLine(text);
+    const code = feedback.makeCode({ g: id, v: rel.version, s: stars, t: line, a: account() ? account().id : '', at: new Date().toISOString() });
+    return api.report(id, `Test feedback for version ${rel.version}: ${feedback.stars(stars)} (${stars} of 5)\n${line}\n\nCode for Zero (paste it in Testers):\n${code}`);
   },
   report: (id, text) => {
     const g = catalogue && catalogue.games.find((x) => x.id === id);
@@ -611,6 +615,14 @@ const api = {
   devRemoveNews: (id) => { devChannel().removeNews(id); return refresh(); },
   devSetTester: (o) => { devChannel().setTester({ accountId: o.accountId, name: o.name, games: o.games || [] }); return refresh(); },
   devRemoveTester: (id) => { devChannel().removeTester(id); return refresh(); },
+  // Tester feedback list (Zero's PC only): paste codes from testers, see stars per game + version.
+  devFeedback: () => {
+    const names = Object.fromEntries(((catalogue && catalogue.games) || []).map((g) => [g.id, g.name]));
+    const who = Object.fromEntries(((catalogue && catalogue.testers) || []).map((t) => [t.accountId, t.name]));
+    return feedbackStore().grouped().map((x) => ({ ...x, name: names[x.game] || x.game, items: x.items.map((e) => ({ ...e, who: who[e.a] || '' })) }));
+  },
+  devFeedbackAdd: (text) => feedbackStore().add(text),
+  devFeedbackRemove: (at, a) => feedbackStore().remove(at, a),
   devUpload: async () => {
     const d = developer();
     if (!d.github || !d.github.repo || !d.github.token) throw new Error('Set github.repo and github.token in developer.json first');
@@ -746,7 +758,7 @@ const CHECKS = {
   devAddVersion: ([o]) => { V.obj(o); V.gameId(o.gameId); V.dir(o.buildDir, 'build folder'); V.version(o.version); V.optStr(o.notes, "what's new", 300); },
   devHide: ([id, hidden]) => { V.gameId(id); V.bool(hidden); },
   openTrailer: gid, makeShortcut: gid, moveGame: gid, crashPreview: gid, crashSend: gid, crashDismiss: gid,
-  feedback: ([id, vote, text]) => { V.gameId(id); V.oneOf(vote, ['up', 'down'], 'vote'); V.optStr(text, 'text', 2000); },
+  feedback: ([id, stars, text, ...rest]) => { V.gameId(id); V.oneOf(stars, [1, 2, 3, 4, 5], 'stars'); V.optStr(text, 'text', feedback.MAX_TEXT); noMore(rest); },
   devSetTestNotes: ([id, v, text]) => { V.gameId(id); V.version(v); V.str(text, 'what to test', 600); },
   setLaunchArgs: ([id, text]) => { V.gameId(id); V.str(text, 'launch options', 300); },
   devSetGameInfo: ([id, o]) => {
@@ -766,6 +778,9 @@ const CHECKS = {
   devRemoveNews: ([id]) => V.match(id, /^n[0-9a-z]{4,24}$/, 'news id'),
   devSetTester: ([o]) => { V.obj(o); V.str(o.accountId, 'account ID', 20); V.optStr(o.name, 'name', 32); V.list(o.games || [], 'games').forEach(V.gameId); },
   devRemoveTester: ([id]) => V.str(id, 'account ID', 20),
+  devFeedback: none,
+  devFeedbackAdd: ([text, ...rest]) => { V.str(text, 'text', 200000); noMore(rest); },
+  devFeedbackRemove: ([at, a, ...rest]) => { V.str(at, 'time', 40); V.str(a, 'account ID', 20); noMore(rest); },
   devGodotExport: ([id, v, notes]) => { V.gameId(id); V.str(v, 'version', 40); if (v.trim()) V.version(v); V.optStr(notes, "what's new", 300); },
   devAutoStart: ([on]) => { if (on !== undefined) V.bool(on); },
   devAddFriend: ([o]) => { V.obj(o); V.gameId(o.friendId); V.str(o.name, 'name', 40); V.str(o.publicKeyPem, 'public key', 2000, { allowEmpty: false }); V.list(o.games || [], 'games', 20).forEach(V.gameId); },

@@ -172,3 +172,13 @@ Zero was asleep. When something was unclear I picked the safest simple option an
 57. **Friend files from "__proto__"** (or "constructor") are refused as an unknown friend. Before, the friend list
     lookup could hit a built-in JavaScript name. It was still refused later by the signature check, but now it stops
     at the first step.
+58. **Morning extras (Zero said "All 4")**: Pick folder fixes a red folder in one click; My reports reads ONLY files
+    named like a report in the reports folder (no paths); the welcome box shows once, never for Zero; Continue playing
+    shows the 3 games played last.
+59. **Play time + badges stay on this PC** (playtime.json, apart from installed.json so it stays after a reinstall).
+    One session counts 24 hours at most (a game left open for days). Nothing is sent anywhere.
+60. **Tester feedback = 1-5 stars + one line (max 200).** No new upload path: the saved report has a short code
+    (`ZLFB1:`). The tester sends it to Zero like a problem report; Zero pastes it in Testers and it is kept in
+    feedback.json on his PC only. The code is not signed (low stakes): every value is checked on paste, and the
+    account ID / tester name is shown next to each line, so Zero sees who wrote it. Same code twice = added once.
+    The list lives on the Testers page (not a new menu item), so the Ctrl+1..9 keys stay the same.
