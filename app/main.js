@@ -423,17 +423,17 @@ const api = {
   devHub: () => {
     const d = developer(); const hub = d.hub || {};
     const seed = readJson(path.join(__dirname, 'data', 'hub-seed.json'), { games: [] });
-    const r = gamehub.build({ seed, marks: readJson(file('hub.json'), {}), siteDir: hub.siteDir, projects: hub.projects || [] });
+    // Your marks: old hub.json (from before My projects) + what you set in My projects (wins).
+    const marks = readJson(file('hub.json'), {});
+    const TO_HUB = { 'needs-playtest': 'testing', ready: 'ready', building: 'building', idea: 'idea', 'on-hold': 'on-hold', released: 'released', scrapped: 'scrapped' };
+    for (const p of projectStore().load().projects) {
+      if (!p.history.length) continue; // never edited: keep what the PC and the notes say
+      marks[p.id] = { ...(marks[p.id] || {}), ...(TO_HUB[p.stage] ? { status: TO_HUB[p.stage] } : {}), ...(p.nextStep ? { nextStep: p.nextStep } : {}), ...(p.needsWork ? { needsWork: p.needsWork } : {}) };
+    }
+    const r = gamehub.build({ seed, marks, siteDir: hub.siteDir, projects: hub.projects || [] });
     const dead = scrappedIds(); // scrapped in My projects = scrapped here too
     for (const g of r.games) if (dead.has(g.id)) { g.status = 'scrapped'; g.statusLabel = 'Scrapped'; g.statusSource = 'you'; }
     lastHub = r; return r;
-  },
-  devHubMark: (id, mark) => {
-    const marks = readJson(file('hub.json'), {});
-    const m = { ...(marks[id] || {}) };
-    for (const k of ['status', 'nextStep', 'note', 'needsWork']) if (k in mark) { if (mark[k] === '' || mark[k] === null || mark[k] === false) delete m[k]; else m[k] = String(mark[k]).slice(0, 300); }
-    m.updatedAt = new Date().toISOString();
-    marks[id] = m; writeJson(file('hub.json'), marks); return api.devHub();
   },
   devWeek: () => {
     const store = readJson(file('weekly.json'), {});
@@ -654,8 +654,9 @@ const api = {
 // ---------------- IPC input checks ----------------
 // Every IPC call has a check here. A call without a check is refused (safe default).
 const none = (args) => { if (args.length) throw new Error('Bad input'); };
-const gid = ([id, ...rest]) => { V.gameId(id); if (rest.length) throw new Error('Bad input'); };
-const gidVer = ([id, v, ...rest]) => { V.gameId(id); V.version(v); if (rest.length) throw new Error('Bad input'); };
+const noMore = (rest) => { if (rest.length) throw new Error('Bad input'); }; // no extra arguments
+const gid = ([id, ...rest]) => { V.gameId(id); noMore(rest); };
+const gidVer = ([id, v, ...rest]) => { V.gameId(id); V.version(v); noMore(rest); };
 const AI_ID = /^\d{10,16}-\d{1,6}$/;
 const SUB_ID = /^[a-z0-9][a-z0-9-]{1,40}--[a-z0-9][a-z0-9-]{1,40}--v?[0-9A-Za-z.-]{1,40}$/;
 const pid = (x) => V.match(x, projects.ID_RE, 'project id');
@@ -663,7 +664,7 @@ const absPath = (x, what = 'folder') => { if (typeof x !== 'string' || x.length 
 const CHECKS = {
   devProjects: none, devStatusReport: none,
   devProjectSave: ([id, patch, ...rest]) => {
-    pid(id); V.obj(patch, 'project'); if (rest.length) throw new Error('Bad input');
+    pid(id); V.obj(patch, 'project'); noMore(rest);
     const allowed = { name: 80, nextStep: 500, notes: 2000, repo: 200, needsWork: 200 };
     for (const [k, v] of Object.entries(patch)) {
       if (allowed[k]) V.str(v, k, allowed[k]);
@@ -675,13 +676,13 @@ const CHECKS = {
       else throw new Error('Bad input: ' + k);
     }
   },
-  devProjectAdd: ([o, ...rest]) => { V.obj(o); if (rest.length) throw new Error('Bad input'); V.str(o.name, 'name', 80, { allowEmpty: false }); if (o.type !== undefined) V.oneOf(o.type, Object.keys(projects.TYPES), 'type'); if (o.folder !== undefined) V.dir(o.folder); },
-  devProjectScrap: ([id, reason, ...rest]) => { pid(id); V.str(reason, 'reason', 200, { allowEmpty: false }); if (rest.length) throw new Error('Bad input'); },
-  devProjectBringBack: ([id, ...rest]) => { pid(id); if (rest.length) throw new Error('Bad input'); },
-  devProjectIgnoreFolder: ([dir, ...rest]) => { absPath(dir); if (rest.length) throw new Error('Bad input'); },
-  devProjectArchive: ([id, folder, ...rest]) => { pid(id); absPath(folder); if (rest.length) throw new Error('Bad input'); },
-  devReviewChoice: ([id, choice, reason, ...rest]) => { pid(id); V.oneOf(choice, ['keep', 'pause', 'scrap', 'skip'], 'choice'); V.optStr(reason, 'reason', 200); if (rest.length) throw new Error('Bad input'); },
-  devSaveReport: ([kind, ...rest]) => { V.oneOf(kind, ['md', 'html'], 'report kind'); if (rest.length) throw new Error('Bad input'); },
+  devProjectAdd: ([o, ...rest]) => { V.obj(o); noMore(rest); V.str(o.name, 'name', 80, { allowEmpty: false }); if (o.type !== undefined) V.oneOf(o.type, Object.keys(projects.TYPES), 'type'); if (o.folder !== undefined) V.dir(o.folder); },
+  devProjectScrap: ([id, reason, ...rest]) => { pid(id); V.str(reason, 'reason', 200, { allowEmpty: false }); noMore(rest); },
+  devProjectBringBack: ([id, ...rest]) => { pid(id); noMore(rest); },
+  devProjectIgnoreFolder: ([dir, ...rest]) => { absPath(dir); noMore(rest); },
+  devProjectArchive: ([id, folder, ...rest]) => { pid(id); absPath(folder); noMore(rest); },
+  devReviewChoice: ([id, choice, reason, ...rest]) => { pid(id); V.oneOf(choice, ['keep', 'pause', 'scrap', 'skip'], 'choice'); V.optStr(reason, 'reason', 200); noMore(rest); },
+  devSaveReport: ([kind, ...rest]) => { V.oneOf(kind, ['md', 'html'], 'report kind'); noMore(rest); },
   state: none, refresh: none, openArcade: none, devHub: none, devWeek: none, devPickFolder: none, devPickFile: none,
   devUpload: none, devGodotProjects: none, devWebsite: none, devFriends: none, devAiFolders: none, devAiHistory: none,
   devChatGPT: none, friendMakeKeys: none, friendPickFolder: none,
@@ -691,7 +692,6 @@ const CHECKS = {
   setSetting: ([k]) => V.str(k, 'setting', 40),
   makeAccount: ([name]) => V.str(name, 'name', 32, { allowEmpty: false }),
   copy: ([text]) => V.str(text, 'text', 20000),
-  devHubMark: ([id, mark]) => { V.match(id, /^[a-z0-9][a-z0-9-]{0,60}$/, 'game id'); V.obj(mark, 'mark'); },
   devWeekSave: ([k, week]) => { V.match(k, /^\d{4}-\d{2}-\d{2}$/, 'week'); V.obj(week, 'week'); },
   devWeekResuggest: ([k]) => V.match(k, /^\d{4}-\d{2}-\d{2}$/, 'week'),
   devOpenFolder: ([f]) => V.str(f, 'folder', 1000, { allowEmpty: false }),

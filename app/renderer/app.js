@@ -390,17 +390,17 @@ function projVisible() {
     && (!f.type || p.type === f.type) && (!f.waitingOn || p.waitingOn === f.waitingOn) && (!f.priority || p.priority === Number(f.priority))
     && (!q || [p.name, p.id, p.nextStep, p.notes, p.repo, ...p.folders].join(' ').toLowerCase().includes(q)));
 }
-function scrapProject(p) {
-  const input = h('input', { id: 'scrap-reason', placeholder: 'example: not fun anymore', maxlength: 200, style: 'width:100%' });
-  modal(`Scrap ${p.name}?`, h('div', {}, h('p', {}, 'Why? One line is enough. No files are deleted.'), input), [
+// Ask "why?" (one line) before a scrap. okLabel = the red button. then(reason) does the scrap.
+function askScrapReason(name, okLabel, then) {
+  modal(`Scrap ${name}?`, h('div', {}, h('p', {}, 'Why? One line is enough. No files are deleted.'),
+    h('input', { id: 'scrap-reason', placeholder: 'example: not fun anymore', maxlength: 200, style: 'width:100%' })), [
     ['Cancel', 'ghost', () => true],
-    ['Next', 'btn bad', async () => {
-      const reason = $('#scrap-reason').value.trim();
-      if (!reason) { toast('Write one line first', 'error'); return false; }
-      const r = await call('devProjectScrap', p.id, reason);
-      if (r) { projData = r; render(); toast(`${p.name} is scrapped. It is hidden everywhere.`); }
-    }]]);
+    [okLabel, 'btn bad', async () => { const reason = $('#scrap-reason').value.trim(); if (!reason) { toast('Write one line first', 'error'); return false; } closeModal(); await then(reason); }]]);
 }
+const scrapProject = (p) => askScrapReason(p.name, 'Next', async (reason) => {
+  const r = await call('devProjectScrap', p.id, reason);
+  if (r) { projData = r; render(); toast(`${p.name} is scrapped. It is hidden everywhere.`); }
+});
 function projectRow(p) {
   const st = p.status; const fx = st.facts;
   const v = (k) => fx[k] && fx[k].value;
@@ -511,13 +511,7 @@ P['dev-review'] = () => {
       h('div', { class: 'review-btns' },
         h('button', { class: 'btn big good', onclick: () => choose('keep') }, 'Keep going'),
         h('button', { class: 'btn big', onclick: () => choose('pause') }, 'Pause'),
-        h('button', { class: 'btn big bad', onclick: () => {
-          const input = h('input', { id: 'scrap-reason', placeholder: 'example: not fun anymore', maxlength: 200, style: 'width:100%' });
-          modal(`Scrap ${p.name}?`, h('div', {}, h('p', {}, 'Why? One line is enough. No files are deleted.'), input), [['Cancel', 'ghost', () => true], ['Scrap it', 'btn bad', async () => {
-            const reason = $('#scrap-reason').value.trim(); if (!reason) { toast('Write one line first', 'error'); return false; }
-            closeModal(); await choose('scrap', reason);
-          }]]);
-        } }, 'Scrap'),
+        h('button', { class: 'btn big bad', onclick: () => askScrapReason(p.name, 'Scrap it', (reason) => choose('scrap', reason)) }, 'Scrap'),
         h('button', { class: 'btn big ghost', onclick: () => choose('skip') }, 'Skip'))),
     back];
 };
