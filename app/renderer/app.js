@@ -68,12 +68,12 @@ function applyLook() {
 
 // ---------------- navigation ----------------
 function pages() {
-  const p = [['store', t('Store')], ['library', t('Library')], ['arcade', t("Zero's Arcade")], ['settings', t('Settings')], ['help', t('Help')]];
+  const p = [['store', t('Store')], ['library', t('Library')], ['arcade', t("Zero's Arcade")], ['settings', t('Settings')], ['help', t('Help')], ['reports', t('My reports')]];
   const dev = S.mode === 'developer' ? [['dev-hub', 'My projects'], ['dev-week', 'This week'], ['dev-publish', 'Publish'], ['dev-testers', 'Testers'], ['dev-friends', 'Friend games'], ['dev-ai', 'AI helper'], ['dev-host', 'Website & host']] : [];
   const fr = S.friendHost ? [['friend', 'Send my game']] : [];
   return { p, dev, fr };
 }
-function go(id) { page = id; gameId = null; render(); }
+function go(id) { page = id; gameId = null; if (id === 'reports') { reportsData = null; openReport = null; } render(); } // My reports: always read fresh
 function renderNav() {
   const { p, dev, fr } = pages();
   const nav = $('#nav'); nav.innerHTML = '';
@@ -376,6 +376,26 @@ const HELP = [
 ];
 P.help = () => [h('h1', {}, t('Help')), h('p', { class: 'sub' }, t('Short answers to common questions.')),
   HELP.map(([q, a]) => h('details', { class: 'panel faq' }, h('summary', {}, t(q)), h('p', {}, t(a))))];
+
+// ---- My reports: problem reports, crash reports and test feedback made on this PC ----
+let reportsData = null; let openReport = null; // { name, text }
+const KIND_LABEL = { crash: 'Crash report', problem: 'Problem report', feedback: 'Test feedback' };
+P.reports = () => {
+  if (!reportsData) { call('reportsList').then((r) => { reportsData = r; render(); }).catch(() => {}); return [h('h1', {}, t('My reports')), h('p', { class: 'dim loading' }, t('Loading…'))]; }
+  const show = async (r) => { openReport = { name: r.name, text: await call('reportText', r.name) }; render(); };
+  return [h('div', { class: 'row', style: 'justify-content:space-between' }, h('h1', {}, t('My reports')),
+      h('button', { class: 'ghost', onclick: () => { reportsData = null; openReport = null; render(); } }, t('Check again'))),
+    h('p', { class: 'sub' }, t('Reports you made for Zero. Nothing is sent by itself: copy one and send it to Zero, for example on Discord.')),
+    !reportsData.length ? h('div', { class: 'empty' }, t('No reports yet. You can make one on a game page.')) : null,
+    reportsData.map((r) => h('div', { class: 'panel report-row' + (openReport && openReport.name === r.name ? ' open' : '') },
+      h('div', { class: 'row', style: 'justify-content:space-between' },
+        h('div', {}, h('span', { class: 'pill rk-' + r.kind }, t(KIND_LABEL[r.kind])), ' ', h('b', {}, r.game || '-'), h('span', { class: 'dim' }, '  ' + new Date(r.at).toLocaleString())),
+        h('div', { class: 'row' },
+          h('button', { class: 'ghost small', onclick: () => (openReport && openReport.name === r.name ? (openReport = null, render()) : show(r)) }, openReport && openReport.name === r.name ? t('Hide') : t('Show')),
+          h('button', { class: 'btn small', onclick: async () => { await call('copy', await call('reportText', r.name)); toast(t('Copied. Now paste it to Zero.')); } }, t('Copy')),
+          h('button', { class: 'ghost small', onclick: () => call('reportShow', r.name) }, t('Show in folder')))),
+      openReport && openReport.name === r.name ? h('pre', { class: 'log small report-text' }, openReport.text) : null))];
+};
 
 // ---- developer ----
 

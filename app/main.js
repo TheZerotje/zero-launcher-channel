@@ -131,6 +131,15 @@ function checkWeekNotice() {
   s.weekNotice = due.key; writeJson(file('settings.json'), s);
 }
 
+// Report files are named <game id>-<time>.txt or <game id>-crash-<time>.txt (see report / crashSend).
+const REPORT_RE = /^[a-z0-9][a-z0-9-]{1,40}-(crash-)?\d{10,16}\.txt$/;
+function reportFile(name) {
+  if (typeof name !== 'string' || !REPORT_RE.test(name)) throw new Error('Bad input: report');
+  const dir = path.join(DATA(), 'reports'); const full = path.join(dir, name);
+  if (path.dirname(full) !== dir || !fs.existsSync(full)) throw new Error('Report not found');
+  return full;
+}
+
 // ---- My projects (developer) ----
 function projectStore() {
   const d = developer() || {};
@@ -359,6 +368,20 @@ const api = {
     writeFileAtomic(out, body);
     return { file: out, text: body };
   },
+  // ---- My reports: the reports this PC made (problem, crash, feedback). Only files in the reports folder. ----
+  reportsList: () => {
+    const dir = path.join(DATA(), 'reports');
+    let files = []; try { files = fs.readdirSync(dir).filter((f) => REPORT_RE.test(f)); } catch {}
+    return files.map((f) => {
+      const full = path.join(dir, f); const st = fs.statSync(full);
+      const head = fs.readFileSync(full, 'utf8').slice(0, 600);
+      const game = (/^Game: (.*)$/m.exec(head) || [])[1] || '';
+      const kind = /-crash-\d+\.txt$/.test(f) ? 'crash' : /^Test feedback/m.test(head) ? 'feedback' : 'problem';
+      return { name: f, kind, game: game.replace(/\s*\([a-z0-9-]+\)$/, ''), at: new Date(st.mtimeMs).toISOString(), size: st.size };
+    }).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+  },
+  reportText: (name) => fs.readFileSync(reportFile(name), 'utf8').slice(0, 200000),
+  reportShow: (name) => { shell.showItemInFolder(reportFile(name)); return true; },
   uninstall: async (id) => {
     const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['Uninstall', 'Cancel'], defaultId: 1, message: 'Uninstall this game?' });
     if (r.response !== 0) return false;
@@ -674,6 +697,7 @@ const SUB_ID = /^[a-z0-9][a-z0-9-]{1,40}--[a-z0-9][a-z0-9-]{1,40}--v?[0-9A-Za-z.
 const pid = (x) => V.match(x, projects.ID_RE, 'project id');
 const absPath = (x, what = 'folder') => { if (typeof x !== 'string' || x.length > 1000 || !path.isAbsolute(x) || x.includes('\0')) throw new Error('Bad input: ' + what); return x; };
 const CHECKS = {
+  reportsList: none, reportText: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); }, reportShow: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); },
   devProjects: none, devStatusReport: none,
   devProjectSave: ([id, patch, ...rest]) => {
     pid(id); V.obj(patch, 'project'); noMore(rest);

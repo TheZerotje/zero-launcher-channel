@@ -163,3 +163,6 @@ button.linkish{background:none;border:0;color:#8fb3ff;padding:6px 0 0;cursor:poi
 label.check-inline{flex-direction:row;align-items:center;gap:8px;font-size:14px;color:var(--text,#e6e9ef);cursor:pointer}
 .path.missing-path{color:#ff6b6e;text-decoration:line-through}
 .folder-line{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.report-row{padding:12px 16px}.report-row.open{border-color:#3d7dff88}
+.pill.rk-crash{background:#e5484d33;color:#ff8a8d}.pill.rk-problem{background:#f0a53033;color:var(--warn)}.pill.rk-feedback{background:#a66bff33;color:var(--test)}
+.report-text{max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:10px}
