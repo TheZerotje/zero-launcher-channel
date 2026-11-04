@@ -2,7 +2,7 @@
 // Zero Launcher - Electron main process.
 // Modes: USER (default), TESTER (same app, account ID on Zero's tester list),
 // DEVELOPER (developer.json present on Zero's PC), FRIEND HOST (friend.json present).
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, dialog, nativeImage, Notification } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { loadChannel, playerView, currentRelease } = require('../core/catalogue');
@@ -17,6 +17,8 @@ const { AiHelper } = require('../core/aihelper');
 const { generateKeyPair } = require('../core/signing');
 const gamehub = require('../core/gamehub');
 const weekly = require('../core/weekly');
+const { DownloadQueue } = require('../core/queue');
+const strings = require('./renderer/strings');
 
 const DEFAULTS = {
   siteUrl: 'https://zero-arcade.tail5afd52.ts.net:8443/',
@@ -32,8 +34,9 @@ const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true })
 
 let win = null, tray = null, installer = null, ai = null, lastHub = null;
 let catalogue = null, catalogueError = null, lastCheck = null;
-const jobs = new Map(); // gameId -> { stage, done, total, signal }
+let queue = null; // downloads: one at a time (core/queue.js)
 const MUTED = !!process.env.ZL_MUTE;
+global.zlNotices = []; // every notification we showed (tests read this)
 
 function settings() { return { ...DEFAULTS, ...readJson(file('settings.json'), {}) }; }
 function developer() { return readJson(file('developer.json')); }
@@ -56,6 +59,34 @@ function devChannel() {
   return new Channel(d.channelDir, fs.readFileSync(d.privateKeyFile, 'utf8'), d.publisher || 'Zero');
 }
 function send(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send(ch, payload); }
+const tr = (text, vars) => strings.t(settings().lang, text, vars);
+
+// Windows message (can be turned off in Settings). Silent when muted.
+function notify(title, body) {
+  if (settings().notify === false) return false;
+  global.zlNotices.push({ title, body, at: new Date().toISOString() });
+  try { if (Notification.isSupported()) new Notification({ title, body, silent: MUTED }).show(); } catch {}
+  return true;
+}
+
+// Tell testers once when a new test version is ready for them.
+function checkNewTestVersions() {
+  if (developer() || !catalogue) return;
+  const v = viewer();
+  if (!v.testerGames.length) return;
+  const s = readJson(file('settings.json'), {});
+  const seen = s.seenTests || {};
+  let changed = false;
+  for (const g of playerView(catalogue, v).games) {
+    const rel = currentRelease(g, v);
+    if (rel && rel.state === 'testing' && seen[g.id] !== rel.version) {
+      notify(tr('New test version'), tr('A new test version of {name} is ready: {v}.', { name: g.name || g.id, v: rel.version }));
+      seen[g.id] = rel.version; changed = true;
+    }
+  }
+  if (changed) { s.seenTests = seen; writeJson(file('settings.json'), s); }
+}
+const publicJob = (j) => j && { stage: j.stage, done: j.done || 0, total: j.total || 0, version: j.version };
 
 async function refresh() {
   try {
@@ -67,6 +98,7 @@ async function refresh() {
   }
   lastCheck = new Date().toISOString();
   send('state', state());
+  checkNewTestVersions();
   if (catalogue && settings().autoUpdate) autoUpdate();
   return state();
 }
@@ -86,42 +118,45 @@ function state() {
       phoneFriendly: g.phoneFriendly, hidden: g.hidden,
       current: currentRelease(g, v), releases: d ? g.releases : undefined,
       installed: inst[g.id] || null, updateReady: updates.includes(g.id),
-      running: installer.isRunning(g.id), job: jobs.get(g.id) ? { ...jobs.get(g.id), signal: undefined } : null,
+      running: installer.isRunning(g.id), job: publicJob(queue.get(g.id)),
     })),
     testers: d && catalogue ? catalogue.testers || [] : undefined,
     error: catalogueError, lastCheck, muted: MUTED,
   };
 }
 
-async function install(gameId) {
-  if (jobs.has(gameId)) return;
+// Put a game in the download line. The queue runs one at a time.
+function install(gameId, { repair = false } = {}) {
+  const g = catalogue && catalogue.games.find((x) => x.id === gameId);
+  if (!g || g.kind !== 'pc') throw new Error('Game not found');
+  const rel = currentRelease(g, viewer());
+  if (!rel) throw new Error('No version available for you yet');
+  if (installer.isRunning(gameId)) throw new Error('Close the game first');
+  return queue.add(gameId, { version: rel.version, total: rel.file.size, done: 0, repair });
+}
+
+async function runInstall(gameId, job) {
   const g = catalogue && catalogue.games.find((x) => x.id === gameId);
   if (!g) throw new Error('Game not found');
   const rel = currentRelease(g, viewer());
   if (!rel) throw new Error('No version available for you yet');
-  const job = { stage: 'download', done: 0, total: rel.file.size, signal: { cancelled: false }, version: rel.version };
-  jobs.set(gameId, job);
-  send('state', state());
+  job.version = rel.version; job.total = rel.file.size;
+  const before = installer.installed()[gameId];
   let last = 0;
-  try {
-    await installer.install(channelSource(), g, rel, {
-      signal: job.signal,
-      onProgress: (p) => {
-        Object.assign(job, p);
-        if (Date.now() - last > 250 || p.stage !== 'download') { last = Date.now(); send('state', state()); }
-      },
-    });
-    jobs.delete(gameId);
-  } catch (e) {
-    jobs.delete(gameId);
-    if (e.code !== 'PAUSED') send('toast', { kind: 'error', text: `${g.name}: ${e.message}` });
-  }
-  send('state', state());
+  await installer.install(channelSource(), g, rel, {
+    signal: job.signal,
+    onProgress: (p) => {
+      Object.assign(job, p);
+      if (Date.now() - last > 250 || p.stage !== 'download') { last = Date.now(); send('state', state()); }
+    },
+  });
+  if (before && before.version !== rel.version) notify(tr('Update done'), tr('{name} is updated to version {v}.', { name: g.name || g.id, v: rel.version }));
 }
 
 function autoUpdate() {
   for (const u of findUpdates(catalogue, installer.installed(), viewer())) {
-    if (!installer.isRunning(u.game.id) && !jobs.has(u.game.id)) install(u.game.id);
+    const j = queue.get(u.game.id);
+    if (!installer.isRunning(u.game.id) && !j) install(u.game.id);
   }
 }
 
@@ -143,10 +178,34 @@ const api = {
   state: () => state(),
   refresh: () => refresh(),
   install: (id) => { install(id); return true; },
-  pause: (id) => { const j = jobs.get(id); if (j) j.signal.cancelled = true; return true; },
+  repair: (id) => { install(id, { repair: true }); return true; },
+  pause: (id) => queue.pause(id),
+  resume: (id) => queue.resume(id),
+  cancel: (id) => { const j = queue.get(id); return queue.cancel(id, () => { if (j && j.version) installer.removePart(id, j.version); }); },
+  report: (id, text) => {
+    const g = catalogue && catalogue.games.find((x) => x.id === id);
+    if (!g) throw new Error('Game not found');
+    const inst = installer.installed()[id];
+    const body = [
+      'Zero Launcher problem report',
+      `Game: ${g.name || id} (${id})`,
+      `Version: ${inst ? inst.version : (currentRelease(g, viewer()) || {}).version || '-'}`,
+      `Launcher: ${app.getVersion()} on ${process.platform} ${require('os').release()}`,
+      `Account: ${account() ? account().id : '-'}`,
+      `Time: ${new Date().toISOString()}`,
+      '',
+      String(text).slice(0, 2000),
+    ].join('\n');
+    const dir = path.join(DATA(), 'reports');
+    fs.mkdirSync(dir, { recursive: true });
+    const out = path.join(dir, `${id}-${Date.now()}.txt`);
+    fs.writeFileSync(out, body);
+    return { file: out, text: body };
+  },
   uninstall: async (id) => {
     const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['Uninstall', 'Cancel'], defaultId: 1, message: 'Uninstall this game?' });
     if (r.response !== 0) return false;
+    if (queue.get(id)) throw new Error('Wait for the download to finish, or press Cancel');
     installer.uninstall(id); send('state', state()); return true;
   },
   play: (id) => {
@@ -157,7 +216,9 @@ const api = {
   },
   openArcade: () => { openWebGame(state().siteUrl); return true; },
   setSetting: (k, v) => {
-    if (!['autoUpdate', 'installRoot'].includes(k)) throw new Error('Not allowed');
+    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'] };
+    if (!ok[k]) throw new Error('Not allowed');
+    if (Array.isArray(ok[k]) ? !ok[k].includes(v) : typeof v !== ok[k]) throw new Error('Not allowed');
     const s = readJson(file('settings.json'), {}); s[k] = v; writeJson(file('settings.json'), s);
     return state();
   },
@@ -261,6 +322,7 @@ const api = {
     if (!fs.existsSync(keyFile)) { const k = generateKeyPair(); fs.writeFileSync(keyFile, k.privateKey); fs.writeFileSync(file('friend-public.pem'), k.publicKey); }
     return fs.readFileSync(file('friend-public.pem'), 'utf8');
   },
+  friendPickFolder: async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0]; },
   friendSubmit: async (o) => {
     const f = friendHost();
     const out = await makeSubmission({ ...o, friendId: f.friendId, privateKeyPem: fs.readFileSync(file('friend-private.pem'), 'utf8'), outDir: path.join(DATA(), 'to-send') });
@@ -307,6 +369,13 @@ else {
   app.whenReady().then(async () => {
     const s = settings();
     installer = new Installer(s.installRoot || path.join(DATA(), 'library'));
+    queue = new DownloadQueue(runInstall, () => send('state', state()));
+    queue.onError = (id, e) => {
+      const g = catalogue && catalogue.games.find((x) => x.id === id);
+      const name = (g && g.name) || id;
+      if (e.code === 'NO_SPACE') send('toast', { kind: 'error', name, text: 'Not enough free space. This game needs about {need} MB. You have {free} MB free.', vars: { need: Math.ceil(e.need / 1048576), free: Math.ceil(e.free / 1048576) } });
+      else send('toast', { kind: 'error', name, text: e.message });
+    };
     ai = new AiHelper(path.join(DATA(), 'ai-runs'));
     createWindow(process.argv.includes('--hidden'));
     if (developer()) {

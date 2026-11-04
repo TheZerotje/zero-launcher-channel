@@ -35,6 +35,35 @@ class Installer {
     fs.renameSync(tmp, this.stateFile);
   }
 
+  // Free space on the disk that holds the games (bytes). Can be replaced in tests.
+  freeBytes() {
+    try { const st = fs.statfsSync(this.root); return st.bavail * st.bsize; } catch { return Infinity; }
+  }
+
+  // Space a game needs: the zip + the unpacked files (guess: 2.5 x the zip) + 50 MB room.
+  static spaceNeeded(zipSize, alreadyDownloaded = 0) {
+    return Math.max(0, zipSize - alreadyDownloaded) + Math.ceil(zipSize * 2.5) + 50 * 1048576;
+  }
+
+  checkSpace(zipSize, alreadyDownloaded = 0) {
+    const need = Installer.spaceNeeded(zipSize, alreadyDownloaded);
+    const free = this.freeBytes();
+    if (free < need) {
+      const mbs = (n) => Math.ceil(n / 1048576);
+      const e = new Error(`Not enough free space. This game needs about ${mbs(need)} MB. You have ${mbs(free)} MB free.`);
+      e.code = 'NO_SPACE'; e.need = need; e.free = free;
+      throw e;
+    }
+  }
+
+  partFile(gameId, version) { return path.join(this.dlDir, `${gameId}-${version}.zip.part`); }
+
+  // Remove a half download (after Cancel).
+  removePart(gameId, version) {
+    if (!ID_RE.test(gameId)) throw new Error('Bad game id');
+    fs.rmSync(this.partFile(gameId, version), { force: true });
+  }
+
   // Get a file from a channel (http or folder) into dest.
   async _fetch(src, dest, opts) {
     if (/^https?:\/\//.test(src)) return downloadTo(src, dest, opts);
@@ -48,8 +77,11 @@ class Installer {
     if (game.kind !== 'pc') throw new Error('Only PC games can be installed');
     if (!ID_RE.test(game.id)) throw new Error('Bad game id');
     const report = (stage, done = 0, total = 0) => onProgress && onProgress({ stage, done, total });
-    const part = path.join(this.dlDir, `${game.id}-${release.version}.zip.part`);
+    const part = this.partFile(game.id, release.version);
     const src = resolveFileUrl(channelSource, release.file.url);
+    let have = 0;
+    try { have = fs.statSync(part).size; } catch {}
+    this.checkSpace(release.file.size || 0, have);
 
     report('download');
     await this._fetch(src, part, { onProgress: (d, t) => report('download', d, t || release.file.size), signal });
@@ -81,7 +113,7 @@ class Installer {
 
     const state = this.installed();
     const old = state[game.id];
-    state[game.id] = { version: release.version, exe: release.exe, dir: finalDir, installedAt: new Date().toISOString() };
+    state[game.id] = { ...(old || {}), version: release.version, exe: release.exe, dir: finalDir, installedAt: new Date().toISOString() };
     this._save(state);
     // Remove the old version only after the new one is safely in place.
     if (old && old.dir && old.dir !== finalDir && !this.running.has(game.id)) {
@@ -109,6 +141,8 @@ class Installer {
     if (!exe.startsWith(path.resolve(info.dir) + path.sep)) throw new Error('Bad game file');
     const child = spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore' });
     this.running.set(gameId, child);
+    const st = this.installed();
+    if (st[gameId]) { st[gameId].lastPlayed = new Date().toISOString(); this._save(st); }
     child.on('exit', (code) => { this.running.delete(gameId); onExit && onExit(code); });
     child.on('error', (err) => { this.running.delete(gameId); onExit && onExit(-1, err); });
     child.unref();

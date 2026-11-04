@@ -72,3 +72,21 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 .check{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;background:var(--panel2)}
 .check input{width:18px;height:18px;accent-color:var(--good)}.check .ctext{flex:1}.check.done .ctext{text-decoration:line-through;color:var(--dim)}
 .check .x{all:unset;cursor:pointer;color:var(--dim);padding:0 6px;font-size:18px}.check .x:hover{color:var(--bad)}
+
+/* ---- player comfort (overnight 2026-11-04) ---- */
+@font-face{font-family:"Atkinson Hyperlegible";font-weight:400;src:url(fonts/atkinson-hyperlegible-latin-400-normal.woff2) format("woff2"),url(fonts/atkinson-hyperlegible-latin-ext-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Atkinson Hyperlegible";font-weight:700;src:url(fonts/atkinson-hyperlegible-latin-700-normal.woff2) format("woff2"),url(fonts/atkinson-hyperlegible-latin-ext-700-normal.woff2) format("woff2")}
+body.easyfont,body.easyfont input,body.easyfont select,body.easyfont textarea,body.easyfont button{font-family:"Atkinson Hyperlegible","Segoe UI",system-ui,sans-serif;letter-spacing:.01em}
+.tools{margin:0 0 18px;gap:12px}.tools .chips{margin:0}
+input.search{flex:1;min-width:220px;max-width:420px;font-size:16px;padding:11px 14px}
+label.inline{flex-direction:row;align-items:center;gap:8px;color:var(--text);margin:8px 0}
+label.switch{flex-direction:row;align-items:center;gap:10px;color:var(--text);margin:8px 0;font-size:14px}
+label.switch input{width:18px;height:18px;accent-color:var(--accent)}
+button.btn.big{padding:11px 26px;font-size:16px}
+.clickable{cursor:pointer}
+.back{margin-bottom:14px}
+.game-top{display:grid;grid-template-columns:minmax(260px,420px) 1fr;gap:24px;margin-bottom:22px;align-items:start}
+.game-top .art{border-radius:14px}
+.game-info h1{font-size:30px}
+details.faq summary{cursor:pointer;font-weight:600;font-size:16px}details.faq p{margin:10px 0 0;color:var(--dim)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

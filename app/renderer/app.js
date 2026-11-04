@@ -1,14 +1,19 @@
 'use strict';
 // Zero Launcher screen. No frameworks, no outside scripts.
+// All player text goes through t() so it can be shown in Dutch too (see strings.js).
 let S = null;        // last state from the app
 let page = null;
+let gameId = null;   // open game page
 let hubFilter = { q: '', status: 'all' };
+let storeFilter = { q: '', kind: 'all' };
+let libFilter = { q: '', sort: 'played' };
 let hubData = null;
 let weekData = null;
 const aiLog = [];    // lines for the AI helper
 let aiJob = null;
 
 const $ = (s) => document.querySelector(s);
+const t = (text, vars) => window.ZLStrings.t(S && S.settings ? S.settings.lang : 'en', text, vars);
 function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -21,109 +26,205 @@ function h(tag, attrs = {}, ...kids) {
   for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return el;
 }
+const cleanErr = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 const call = async (name, ...args) => {
   try { return await window.zl.call(name, ...args); }
-  catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error'); throw e; }
+  catch (e) { toast(t(cleanErr(e)), 'error'); throw e; }
 };
 function toast(text, kind = 'info') {
-  const t = h('div', { class: 'toast ' + kind }, text);
-  $('#toasts').append(t);
-  setTimeout(() => t.remove(), kind === 'error' ? 8000 : 4000);
+  const el = h('div', { class: 'toast ' + kind, role: 'status' }, text);
+  $('#toasts').append(el);
+  setTimeout(() => el.remove(), kind === 'error' ? 8000 : 4000);
 }
 const mb = (n) => (n / 1048576).toFixed(n > 1048576 * 10 ? 0 : 1) + ' MB';
 const initials = (n) => String(n || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+const onOff = (checked, onchange, label) => h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked, onchange }), label);
+
+// ---------------- look: text size, easy font, language ----------------
+const ZOOM = { normal: 1, big: 1.15, bigger: 1.3 };
+function applyLook() {
+  const s = S.settings || {};
+  document.documentElement.style.zoom = ZOOM[s.textSize] || 1;
+  document.body.classList.toggle('easyfont', !!s.easyFont);
+  document.documentElement.lang = s.lang === 'nl' ? 'nl' : 'en';
+  $('#refreshBtn').textContent = t('Check for updates');
+}
 
 // ---------------- navigation ----------------
 function pages() {
-  const p = [['store', 'Store'], ['library', 'Library'], ['arcade', "Zero's Arcade"], ['settings', 'Settings']];
+  const p = [['store', t('Store')], ['library', t('Library')], ['arcade', t("Zero's Arcade")], ['settings', t('Settings')], ['help', t('Help')]];
   const dev = S.mode === 'developer' ? [['dev-hub', 'My games'], ['dev-week', 'This week'], ['dev-publish', 'Publish'], ['dev-testers', 'Testers'], ['dev-friends', 'Friend games'], ['dev-ai', 'AI helper'], ['dev-host', 'Website & host']] : [];
   const fr = S.friendHost ? [['friend', 'Send my game']] : [];
   return { p, dev, fr };
 }
+function go(id) { page = id; gameId = null; render(); }
 function renderNav() {
   const { p, dev, fr } = pages();
   const nav = $('#nav'); nav.innerHTML = '';
   const updates = S.games.filter((g) => g.updateReady).length;
-  const btn = ([id, label]) => h('button', { class: page === id ? 'on' : '', onclick: () => { page = id; render(); } }, label,
+  const btn = ([id, label]) => h('button', { class: page === id && !gameId ? 'on' : '', onclick: () => go(id) }, label,
     id === 'library' && updates ? h('span', { class: 'badge' }, updates) : null);
   p.forEach((x) => nav.append(btn(x)));
   if (dev.length) { nav.append(h('div', { class: 'sec' }, 'Developer')); dev.forEach((x) => nav.append(btn(x))); }
   if (fr.length) { nav.append(h('div', { class: 'sec' }, 'Friend host')); fr.forEach((x) => nav.append(btn(x))); }
-  $('#modeTag').textContent = { developer: 'Developer', tester: 'Tester', user: 'Player' }[S.mode];
-  $('#lastCheck').textContent = S.lastCheck ? 'Checked ' + new Date(S.lastCheck).toLocaleTimeString() : '';
+  $('#modeTag').textContent = { developer: 'Developer', tester: t('Tester'), user: t('Player') }[S.mode];
+  $('#lastCheck').textContent = S.lastCheck ? t('Checked {time}', { time: new Date(S.lastCheck).toLocaleTimeString() }) : '';
 }
 
 // ---------------- game card ----------------
 function art(g) {
   const st = g.current && g.current.state !== 'released' ? g.current.state : null;
   const a = h('div', { class: 'art' }, initials(g.name),
-    h('span', { class: 'tag ' + (st || g.kind) }, st ? (st === 'testing' ? 'TEST VERSION' : 'UNRELEASED') : (g.kind === 'web' ? 'PLAY NOW' : 'PC GAME')));
-  if (g.image && /^https:\/\//.test(g.image)) a.style.backgroundImage = `url("${g.image.replace(/"/g, '')}")`;
+    h('span', { class: 'tag ' + (st || g.kind) }, st ? (st === 'testing' ? t('TEST VERSION') : 'UNRELEASED') : (g.kind === 'web' ? t('PLAY NOW') : t('PC GAME'))));
+  if (g.image && /^https:\/\//.test(g.image)) a.style.backgroundImage = `url("${g.image.replace(/["\\()]/g, '')}")`;
   return a;
 }
+function jobLine(g) {
+  const j = g.job;
+  const pct = j.total ? Math.round((j.done / j.total) * 100) : 0;
+  const label = {
+    waiting: t('Waiting…'), paused: t('Paused at {pct}%', { pct }), download: t('Downloading {pct}%', { pct }),
+    check: t('Checking file…'), unpack: t('Installing…'), done: t('Done'),
+  }[j.stage] || '…';
+  const width = j.stage === 'download' || j.stage === 'paused' ? pct : j.stage === 'waiting' ? 0 : 100;
+  return h('div', { class: 'job' }, h('div', { class: 'bar' }, h('i', { style: `width:${width}%` })),
+    h('div', { class: 'row', style: 'margin-top:6px;justify-content:space-between' }, h('span', { class: 'dim' }, label),
+      h('div', { class: 'row' },
+        j.stage === 'download' ? h('button', { class: 'ghost small', onclick: () => call('pause', g.id) }, t('Pause')) : null,
+        j.stage === 'paused' ? h('button', { class: 'btn small', onclick: () => call('resume', g.id) }, t('Resume')) : null,
+        ['download', 'waiting', 'paused'].includes(j.stage) ? h('button', { class: 'ghost small', onclick: () => call('cancel', g.id) }, t('Cancel')) : null)));
+}
 function actions(g) {
-  if (g.kind === 'web') return h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => call('play', g.id) }, 'Play'));
-  if (g.job) {
-    const pct = g.job.total ? Math.round((g.job.done / g.job.total) * 100) : 0;
-    const label = { download: `Downloading ${pct}%`, check: 'Checking file…', unpack: 'Installing…', done: 'Done' }[g.job.stage] || '…';
-    return h('div', {}, h('div', { class: 'bar' }, h('i', { style: `width:${g.job.stage === 'download' ? pct : 100}%` })),
-      h('div', { class: 'row', style: 'margin-top:6px;justify-content:space-between' }, h('span', { class: 'dim' }, label),
-        g.job.stage === 'download' ? h('button', { class: 'ghost small', onclick: () => call('pause', g.id) }, 'Pause') : null));
-  }
+  if (g.kind === 'web') return h('div', { class: 'row' }, h('button', { class: 'btn big', onclick: () => call('play', g.id) }, t('Play')));
+  if (g.job) return jobLine(g);
   if (!g.installed) {
-    return h('div', { class: 'row' }, h('button', { class: 'btn', disabled: !g.current, onclick: () => call('install', g.id) }, 'Install'),
+    return h('div', { class: 'row' }, h('button', { class: 'btn big', disabled: !g.current, onclick: () => call('install', g.id) }, t('Install')),
       g.current && g.current.file ? h('span', { class: 'dim' }, mb(g.current.file.size)) : null);
   }
   return h('div', { class: 'row' },
-    g.running ? h('button', { class: 'btn good', disabled: true }, 'Playing…') : h('button', { class: 'btn good', onclick: () => call('play', g.id) }, 'Play'),
-    g.updateReady ? h('button', { class: 'btn warn', onclick: () => call('install', g.id) }, 'Update') : null,
-    h('button', { class: 'ghost small', disabled: g.running, onclick: () => call('uninstall', g.id) }, 'Uninstall'));
+    g.running ? h('button', { class: 'btn good big', disabled: true }, t('Playing…')) : h('button', { class: 'btn good big', onclick: () => call('play', g.id) }, t('Play')),
+    g.updateReady ? h('button', { class: 'btn warn', onclick: () => call('install', g.id) }, t('Update')) : null);
 }
 function card(g) {
   const ver = g.installed ? `v${g.installed.version}` : g.current ? `v${g.current.version}` : '';
-  return h('div', { class: 'card' }, art(g), h('div', { class: 'body' },
-    h('div', { class: 'row', style: 'justify-content:space-between' }, h('b', {}, g.name), h('span', { class: 'dim' }, ver)),
-    h('p', {}, g.description || (g.kind === 'web' ? 'Plays right here, no install.' : '')),
+  const open = () => { gameId = g.id; render(); };
+  return h('div', { class: 'card' }, h('div', { class: 'clickable', title: t('More about this game'), onclick: open }, art(g)), h('div', { class: 'body' },
+    h('div', { class: 'row', style: 'justify-content:space-between' }, h('b', { class: 'clickable', onclick: open }, g.name), h('span', { class: 'dim' }, ver)),
+    h('p', {}, g.description || (g.kind === 'web' ? t('Plays right here, no install.') : '')),
     actions(g)));
+}
+const matches = (g, q) => !q || (g.name + ' ' + (g.description || '')).toLowerCase().includes(q.toLowerCase());
+function searchBox(id, value, placeholder, onchange) {
+  return h('input', { id, type: 'search', class: 'search', value, placeholder, 'aria-label': placeholder,
+    oninput: (e) => { onchange(e.target.value); render(); const i = $('#' + id); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
 }
 
 // ---------------- pages ----------------
 const P = {};
 P.store = () => {
-  const web = S.games.filter((g) => g.kind === 'web'), pc = S.games.filter((g) => g.kind === 'pc');
+  const kinds = [['all', t('All')], ['pc', t('PC games')], ['web', t('Play instantly')], ['installed', t('Installed')]];
+  const list = S.games.filter((g) => matches(g, storeFilter.q) && (storeFilter.kind === 'all'
+    || (storeFilter.kind === 'installed' ? !!g.installed : g.kind === storeFilter.kind)));
+  const web = list.filter((g) => g.kind === 'web'), pc = list.filter((g) => g.kind === 'pc');
   return [
-    h('h1', {}, 'Store'), h('p', { class: 'sub' }, 'All of Zero\'s games. Website games play right away, PC games install.'),
-    h('div', { class: 'hero' }, h('div', {}, h('h2', {}, "Zero's Arcade"), h('div', { class: 'dim' }, 'Every website game, inside the launcher.')),
-      h('button', { class: 'btn', onclick: () => call('openArcade') }, 'Open the Arcade')),
-    S.error ? h('div', { class: 'err' }, S.error) : null,
-    pc.length ? [h('h3', {}, 'PC games'), h('div', { class: 'grid' }, pc.map(card))] : null,
-    web.length ? [h('h3', { style: 'margin-top:26px' }, 'Website games'), h('div', { class: 'grid' }, web.map(card))] : null,
-    !S.games.length && !S.error ? h('div', { class: 'empty' }, 'No games yet. Check back soon!') : null,
+    h('h1', {}, t('Store')), h('p', { class: 'sub' }, t("All of Zero's games. Website games play right away, PC games install.")),
+    h('div', { class: 'hero' }, h('div', {}, h('h2', {}, t("Zero's Arcade")), h('div', { class: 'dim' }, t('Every website game, inside the launcher.'))),
+      h('button', { class: 'btn', onclick: () => call('openArcade') }, t('Open the Arcade'))),
+    S.error ? h('div', { class: 'err' }, t(S.error)) : null,
+    h('div', { class: 'row tools' }, searchBox('store-q', storeFilter.q, t('Find a game…'), (v) => { storeFilter.q = v; }),
+      h('div', { class: 'row chips' }, kinds.map(([k, l]) => h('button', { class: 'chip' + (storeFilter.kind === k ? ' on' : ''), onclick: () => { storeFilter.kind = k; render(); } }, l)))),
+    pc.length ? [h('h3', {}, t('PC games')), h('div', { class: 'grid' }, pc.map(card))] : null,
+    web.length ? [h('h3', { style: 'margin-top:26px' }, t('Website games')), h('div', { class: 'grid' }, web.map(card))] : null,
+    !S.games.length && !S.error ? h('div', { class: 'empty' }, t('No games yet. Check back soon!')) : null,
+    S.games.length && !list.length ? h('div', { class: 'empty' }, t('No game found. Try another word.')) : null,
   ];
 };
 P.library = () => {
-  const mine = S.games.filter((g) => g.installed || g.job);
-  return [h('h1', {}, 'Library'), h('p', { class: 'sub' }, S.settings.autoUpdate ? 'Updates install by themselves.' : 'Auto update is off. Press Update when you see it.'),
-    mine.length ? h('div', { class: 'grid' }, mine.map(card)) : h('div', { class: 'empty' }, 'Nothing installed yet. Go to the Store and press Install.')];
+  let mine = S.games.filter((g) => (g.installed || g.job) && matches(g, libFilter.q));
+  mine = mine.slice().sort(libFilter.sort === 'name' ? (a, b) => a.name.localeCompare(b.name)
+    : (a, b) => ((b.installed && b.installed.lastPlayed) || '').localeCompare((a.installed && a.installed.lastPlayed) || '') || a.name.localeCompare(b.name));
+  const any = S.games.some((g) => g.installed || g.job);
+  return [h('h1', {}, t('Library')), h('p', { class: 'sub' }, S.settings.autoUpdate ? t('Updates install by themselves.') : t('Auto update is off. Press Update when you see it.')),
+    any ? h('div', { class: 'row tools' }, searchBox('lib-q', libFilter.q, t('Find a game…'), (v) => { libFilter.q = v; }),
+      h('label', { class: 'inline' }, t('Sort'), h('select', { id: 'lib-sort', onchange: (e) => { libFilter.sort = e.target.value; render(); } },
+        h('option', { value: 'played', selected: libFilter.sort === 'played' }, t('Last played')), h('option', { value: 'name', selected: libFilter.sort === 'name' }, t('Name (A to Z)'))))) : null,
+    mine.length ? h('div', { class: 'grid' }, mine.map(card)) : h('div', { class: 'empty' }, any ? t('No game found. Try another word.') : t('Nothing installed yet. Go to the Store and press Install.'))];
 };
-P.arcade = () => [h('h1', {}, "Zero's Arcade"), h('p', { class: 'sub' }, 'The website, inside the launcher. It still works in any browser too.'),
-  h('button', { class: 'btn', onclick: () => call('openArcade') }, 'Open the Arcade'), h('p', { class: 'dim' }, S.siteUrl)];
+P.arcade = () => [h('h1', {}, t("Zero's Arcade")), h('p', { class: 'sub' }, t('The website, inside the launcher. It still works in any browser too.')),
+  h('button', { class: 'btn big', onclick: () => call('openArcade') }, t('Open the Arcade')), h('p', { class: 'dim' }, S.siteUrl)];
+P.game = () => {
+  const g = S.games.find((x) => x.id === gameId);
+  if (!g) { gameId = null; return P[page](); }
+  const rel = g.current;
+  const box = h('div', { class: 'panel report' }, h('h3', {}, t('Report a problem')),
+    h('p', { class: 'dim' }, t('Tell Zero what went wrong. The launcher makes a small file. Send it to Zero (for example on Discord).')),
+    h('textarea', { id: 'rep-text', maxlength: 2000, placeholder: t('What happened? What did you do just before?') }),
+    h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: async () => {
+      const text = $('#rep-text').value.trim();
+      if (!text) return toast(t('Type what went wrong first.'), 'error');
+      const r = await call('report', g.id, text);
+      await call('copy', r.text);
+      toast(t('Report saved and copied. Send it to Zero.'));
+      $('#rep-text').value = '';
+    } }, t('Make report'))));
+  return [
+    h('button', { class: 'ghost small back', onclick: () => { gameId = null; render(); } }, '← ' + t('Back')),
+    h('div', { class: 'game-top' }, art(g), h('div', { class: 'game-info' },
+      h('h1', {}, g.name), h('p', { class: 'sub' }, g.description || ''),
+      rel ? h('p', { class: 'dim' }, t('Version {v}', { v: rel.version })) : null,
+      actions(g))),
+    rel && rel.notes ? h('div', { class: 'panel' }, h('h3', {}, t("What's new")), h('p', {}, rel.notes)) : null,
+    g.kind === 'pc' && g.installed ? h('div', { class: 'panel' }, h('h3', {}, t('Fix the game')),
+      h('p', { class: 'dim' }, t('Game not starting or looks broken? Repair downloads it again and checks every file.')),
+      h('div', { class: 'row' }, h('button', { class: 'ghost', disabled: !!g.job || g.running, onclick: () => call('repair', g.id).then(() => toast(t('Repair started'))) }, t('Repair')),
+        h('button', { class: 'ghost', disabled: !!g.job || g.running, onclick: () => call('uninstall', g.id) }, t('Uninstall')))) : null,
+    box,
+  ];
+};
 P.settings = () => {
   const acc = S.account;
-  return [h('h1', {}, 'Settings'), h('p', { class: 'sub' }, ''),
-    h('div', { class: 'panel' }, h('h3', {}, 'My account'),
-      acc ? [h('p', {}, 'Hi ', h('b', {}, acc.name), '! Your account ID:'), h('div', { class: 'bigid' }, acc.id),
-        h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'ghost', onclick: () => call('copy', acc.id).then(() => toast('Copied')) }, 'Copy ID')),
-        h('p', { class: 'dim' }, 'Want to test games? Send this ID to Zero.'),
-        S.mode === 'tester' ? h('p', {}, h('span', { class: 'pill testing' }, 'TESTER'), ' You get test versions of: ', S.viewer.testerGames.map((id) => (S.games.find((g) => g.id === id) || { name: id }).name).join(', ')) : null]
-        : [h('p', { class: 'dim' }, 'No password needed. Your account lives on this PC.'),
-          h('div', { class: 'row' }, h('input', { id: 'accName', placeholder: 'Your name', maxlength: 32 }),
-            h('button', { class: 'btn', onclick: async () => { await call('makeAccount', $('#accName').value); toast('Account made'); } }, 'Make account'))]),
-    h('div', { class: 'panel' }, h('h3', {}, 'Updates'),
-      h('label', { style: 'flex-direction:row;align-items:center;gap:10px;color:var(--text)' },
-        h('input', { type: 'checkbox', checked: S.settings.autoUpdate, onchange: (e) => call('setSetting', 'autoUpdate', e.target.checked).then(set) }),
-        'Update games by themselves (recommended)'))];
+  const st = S.settings;
+  const setS = (k, v) => call('setSetting', k, v).then(set);
+  return [h('h1', {}, t('Settings')), h('p', { class: 'sub' }, ''),
+    h('div', { class: 'panel' }, h('h3', {}, t('My account')),
+      acc ? [h('p', {}, t('Hi {name}! Your account ID:', { name: acc.name })), h('div', { class: 'bigid' }, acc.id),
+        h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'ghost', onclick: () => call('copy', acc.id).then(() => toast(t('Copied'))) }, t('Copy ID'))),
+        h('p', { class: 'dim' }, t('Want to test games? Send this ID to Zero.')),
+        S.mode === 'tester' ? h('p', {}, h('span', { class: 'pill testing' }, t('TESTER')), ' ', t('You get test versions of:'), ' ', S.viewer.testerGames.map((id) => (S.games.find((g) => g.id === id) || { name: id }).name).join(', ')) : null]
+        : [h('p', { class: 'dim' }, t('No password needed. Your account lives on this PC.')),
+          h('div', { class: 'row' }, h('input', { id: 'accName', placeholder: t('Your name'), maxlength: 32 }),
+            h('button', { class: 'btn', onclick: async () => { await call('makeAccount', $('#accName').value); toast(t('Account made')); } }, t('Make account')))]),
+    h('div', { class: 'panel' }, h('h3', {}, t('Updates')),
+      onOff(st.autoUpdate, (e) => setS('autoUpdate', e.target.checked), t('Update games by themselves (recommended)')),
+      onOff(st.notify !== false, (e) => setS('notify', e.target.checked), t('Show a Windows message when an update is done or a new test version is ready'))),
+    h('div', { class: 'panel' }, h('h3', {}, t('Easy to read')),
+      h('label', { class: 'inline' }, t('Text size'), h('select', { id: 'set-size', onchange: (e) => setS('textSize', e.target.value) },
+        [['normal', t('Normal')], ['big', t('Big')], ['bigger', t('Bigger')]].map(([v, l]) => h('option', { value: v, selected: (st.textSize || 'normal') === v }, l)))),
+      onOff(!!st.easyFont, (e) => setS('easyFont', e.target.checked), t('Easy-to-read letters (Atkinson Hyperlegible)')),
+      h('label', { class: 'inline' }, t('Language'), h('select', { id: 'set-lang', onchange: (e) => setS('lang', e.target.value) },
+        h('option', { value: 'en', selected: st.lang !== 'nl' }, 'English'), h('option', { value: 'nl', selected: st.lang === 'nl' }, 'Nederlands')))),
+  ];
 };
+const HELP = [
+  ['Windows shows a blue box "Windows protected your PC". Is it safe?',
+    'Yes. Windows shows this for new apps that are not famous yet. Press "More info", then "Run anyway". You only need to do this once.'],
+  ['Where are my games?',
+    'In the Library. The game files are on your PC in the Zero Launcher folder. You never need to open that folder.'],
+  ['How do updates work?',
+    'The launcher checks for new versions by itself. If a game has an update, it downloads and installs it for you. You just press Play.'],
+  ['A download stopped. What now?',
+    'Press Resume. The download goes on from where it stopped. Only one game downloads at a time; the others say "Waiting".'],
+  ['A game does not start. What can I do?',
+    'Open the game page and press Repair. It downloads the game again and checks every file.'],
+  ['How do I report a problem?',
+    'Click the game to open its page. Type what went wrong under "Report a problem" and press "Make report". Send it to Zero, for example on Discord.'],
+  ['How do I become a tester?',
+    'Go to Settings and make an account (just a name, no password). Send your account ID to Zero. When Zero adds you, you get test versions of some games.'],
+  ['Is it safe?',
+    'Yes. Every game list is signed by Zero, and every download is checked before it is installed. A changed or broken file is never used.'],
+];
+P.help = () => [h('h1', {}, t('Help')), h('p', { class: 'sub' }, t('Short answers to common questions.')),
+  HELP.map(([q, a]) => h('details', { class: 'panel faq' }, h('summary', {}, t(q)), h('p', {}, t(a))))];
 
 // ---- developer ----
 
@@ -331,7 +432,7 @@ P.friend = () => [h('h1', {}, 'Send my game to Zero'), h('p', { class: 'sub' }, 
     h('div', { class: 'form' }, h('label', {}, 'Game id', h('input', { id: 's-id', placeholder: 'sams-game' })), h('label', {}, 'Game name', h('input', { id: 's-name' })),
       h('label', {}, 'Version', h('input', { id: 's-ver', placeholder: '0.1.0' })), h('label', {}, "What's new", h('input', { id: 's-notes' }))),
     h('button', { class: 'btn', onclick: async () => {
-      const dir = await call('devPickFolder').catch(() => null);
+      const dir = await call('friendPickFolder').catch(() => null);
       if (!dir) return;
       await call('friendSubmit', { gameId: $('#s-id').value.trim(), gameName: $('#s-name').value.trim(), version: $('#s-ver').value.trim(), notes: $('#s-notes').value.trim(), buildDir: dir });
       toast('Game file made. Send the .zlsub file to Zero.');
@@ -340,20 +441,21 @@ P.friend = () => [h('h1', {}, 'Send my game to Zero'), h('p', { class: 'sub' }, 
 // ---------------- render ----------------
 function render() {
   if (!S) return;
+  applyLook();
   const { p, dev, fr } = pages();
   if (!page) page = S.mode === 'developer' ? 'dev-hub' : 'store';
   if (![...p, ...dev, ...fr].some(([id]) => id === page)) page = 'store';
   renderNav();
   const keepScroll = $('#main').scrollTop;
   const m = $('#main'); m.innerHTML = '';
-  m.append(...[P[page]()].flat(3).filter(Boolean));
+  m.append(...[gameId ? P.game() : P[page]()].flat(3).filter(Boolean));
   m.scrollTop = keepScroll;
   const log = $('#ai-log'); if (log) log.scrollTop = log.scrollHeight;
 }
 function set(s) { if (s && s.games) { S = s; render(); } }
 
 window.zl.on('state', (s) => { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); S = s; if (typing) renderNav(); else render(); });
-window.zl.on('toast', (t) => toast(t.text, t.kind));
+window.zl.on('toast', (m) => toast(m.name ? `${m.name}: ${t(m.text, m.vars)}` : t(m.text, m.vars), m.kind));
 window.zl.on('ai', (m) => {
   if (m.line) aiLog.push(m.line);
   if (m.end !== undefined) { aiLog.push(`(finished, code ${m.end})`); aiJob = null; }
@@ -361,5 +463,5 @@ window.zl.on('ai', (m) => {
   if (log) { log.textContent = aiLog.join('\n'); log.scrollTop = log.scrollHeight; }
   if (m.end !== undefined && page === 'dev-ai') render();
 });
-$('#refreshBtn').addEventListener('click', async () => { set(await call('refresh')); toast('Checked for updates'); });
+$('#refreshBtn').addEventListener('click', async () => { set(await call('refresh')); toast(t('Checked for updates')); });
 call('state').then(set);

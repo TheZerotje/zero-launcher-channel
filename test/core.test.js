@@ -310,3 +310,75 @@ test('developer sees pulled versions in the list, but never gets them as current
   const user = pv(cat, { role: 'user' });
   assert.deepEqual(user.games[0].releases.map((r) => r.version), ['1.0']);
 });
+
+test('download queue: one at a time, waiting, pause/resume, cancel', async () => {
+  const { DownloadQueue } = require('../core/queue');
+  const order = [];
+  const gates = {};
+  const run = (id, job) => new Promise((resolve, reject) => {
+    order.push(id);
+    gates[id] = { resolve, job };
+    const tick = setInterval(() => { if (job.signal.cancelled) { clearInterval(tick); const e = new Error('Paused'); e.code = 'PAUSED'; reject(e); } }, 5);
+    gates[id].done = () => { clearInterval(tick); resolve(); };
+  });
+  const q = new DownloadQueue(run);
+  q.add('a'); q.add('b'); q.add('c');
+  assert.equal(q.get('a').stage, 'download');
+  assert.equal(q.get('b').stage, 'waiting');
+  assert.equal(q.add('b'), false, 'no double add');
+  // pause the running one: next one starts
+  q.pause('a');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(q.get('a').stage, 'paused');
+  assert.equal(q.get('b').stage, 'download');
+  // cancel a waiting one
+  let removed = null;
+  q.cancel('c', (id) => { removed = id; });
+  assert.equal(removed, 'c');
+  assert.equal(q.get('c'), null);
+  // resume a: it waits behind b
+  q.resume('a');
+  assert.equal(q.get('a').stage, 'waiting');
+  gates.b.done();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(q.get('b'), null);
+  assert.equal(q.get('a').stage, 'download');
+  // cancel the running one
+  let gone = null;
+  q.cancel('a', (id) => { gone = id; });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(gone, 'a');
+  assert.equal(q.list().length, 0);
+  assert.deepEqual(order, ['a', 'b', 'a']);
+});
+
+test('not enough disk space: clear message, nothing downloaded', async () => {
+  const dir = tmp();
+  const inst = new Installer(path.join(dir, 'lib'));
+  inst.freeBytes = () => 10 * 1048576; // 10 MB free
+  const game = { id: 'bigone', kind: 'pc' };
+  const release = { version: '1.0', exe: 'a.exe', file: { url: 'x.zip', size: 500 * 1048576, sha256: 'a'.repeat(64) } };
+  await assert.rejects(inst.install(dir, game, release), (e) => e.code === 'NO_SPACE' && /needs about \d+ MB/.test(e.message) && /10 MB free/.test(e.message));
+  assert.equal(fs.readdirSync(path.join(dir, 'lib', 'downloads')).length, 0);
+  assert.ok(Installer.spaceNeeded(100) > 100);
+});
+
+test('strings: every screen text has a Dutch version', () => {
+  const strings = require('../app/renderer/strings');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'renderer', 'app.js'), 'utf8');
+  const re = /\bt\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
+  const missing = [];
+  let m;
+  while ((m = re.exec(src))) { const k = m[2].replace(/\\'/g, "'").replace(/\\"/g, '"'); if (!(k in strings.NL)) missing.push(k); }
+  const help = src.slice(src.indexOf('const HELP'), src.indexOf('P.help'));
+  const re2 = /'((?:\\.|[^'])*)'/g;
+  while ((m = re2.exec(help))) if (!(m[1] in strings.NL)) missing.push(m[1]);
+  const main = fs.readFileSync(path.join(__dirname, '..', 'app', 'main.js'), 'utf8');
+  const re3 = /\btr\(\s*'((?:\\.|[^'])*)'/g;
+  while ((m = re3.exec(main))) if (!(m[1] in strings.NL)) missing.push(m[1]);
+  assert.deepEqual(missing, []);
+  assert.equal(strings.t('nl', 'Play'), 'Spelen');
+  assert.equal(strings.t('en', 'Play'), 'Play');
+  assert.equal(strings.t('nl', 'Downloading {pct}%', { pct: 40 }), 'Downloaden 40%');
+  assert.equal(strings.t('nl', 'some unknown text'), 'some unknown text');
+});

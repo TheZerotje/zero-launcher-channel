@@ -42,9 +42,16 @@ test('player: install, play, update arrives and installs, uninstall', async () =
     await rr.locator('button', { hasText: 'Play' }).waitFor({ timeout: 20000 });
     const installed = JSON.parse(fs.readFileSync(path.join(demo.user, 'library', 'installed.json'), 'utf8'));
     assert.equal(installed.railrove.version, '0.19.13.0');
+    assert.ok(installed.railrove.lastPlayed, 'last played is saved');
+    const notices = await app.evaluate(() => global.zlNotices);
+    assert.ok(notices.some((n) => n.title === 'Update done' && /0\.19\.13\.0/.test(n.body)), 'update message shown');
 
-    await rr.locator('button', { hasText: 'Uninstall' }).click();
-    await rr.locator('button', { hasText: 'Install' }).waitFor({ timeout: 10000 });
+    // Uninstall lives on the game page.
+    await rr.locator('b', { hasText: 'Railrove' }).click();
+    await win.locator('h1', { hasText: 'Railrove' }).waitFor();
+    await shot(win, 'player-game-page');
+    await win.locator('button', { hasText: 'Uninstall' }).click();
+    await win.locator('button', { hasText: 'Install' }).first().waitFor({ timeout: 10000 });
     assert.ok(!fs.existsSync(path.join(demo.user, 'library', 'games', 'railrove')));
     assert.deepEqual(errors, []);
   } finally { await close(app); }
