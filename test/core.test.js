@@ -973,3 +973,38 @@ test('launcher log: one line per event, secrets blanked, never more than about 2
   assert.ok(log.tail(300).length <= 300); assert.match(log.tail(300), /^\d{4}-/, 'starts at a whole line');
   new Log(path.join(dir, 'launcher.log', 'nope')).info('x'); // a broken folder never throws
 });
+
+test('launcher backup: settings, account, play time, reports; never keys, developer.json or friend.json; sneaky zips refused', async () => {
+  const backup = require('../core/backup');
+  const yazl = require('yazl');
+  const REPORT_RE = /^[a-z0-9][a-z0-9-]{1,40}-(crash-)?\d{10,16}\.txt$/;
+  const opts = { reportRe: REPORT_RE, settingsClean: (o) => Object.fromEntries(Object.entries(o).filter(([k]) => ['lang', 'textSize'].includes(k))),
+    accountOk: (a) => testers.ID_RE.test(a.id || '') };
+  const a = tmp();
+  fs.writeFileSync(path.join(a, 'settings.json'), JSON.stringify({ lang: 'nl', installRoot: '/games', admin: true }));
+  fs.writeFileSync(path.join(a, 'account.json'), JSON.stringify({ name: 'Sam', id: 'SAM-4F2A-9C1B' }));
+  fs.writeFileSync(path.join(a, 'playtime.json'), JSON.stringify({ railrove: { ms: 5, plays: 1 } }));
+  for (const f of ['developer.json', 'friend.json', 'friend-private.pem']) fs.writeFileSync(path.join(a, f), 'SECRET');
+  fs.mkdirSync(path.join(a, 'reports')); fs.writeFileSync(path.join(a, 'reports', 'railrove-1234567890123.txt'), 'report'); fs.writeFileSync(path.join(a, 'reports', 'other.txt'), 'x');
+  const zip = path.join(tmp(), 'b.zip');
+  const names = await backup.make(a, zip, opts);
+  assert.deepEqual(names.sort(), ['account.json', 'playtime.json', 'reports/railrove-1234567890123.txt', 'settings.json']);
+  const { files, at } = await backup.read(zip, opts);
+  assert.ok(at); assert.deepEqual(files.get('settings.json'), { lang: 'nl' }, 'no installRoot, no unknown keys');
+  const b = tmp();
+  fs.writeFileSync(path.join(b, 'settings.json'), JSON.stringify({ installRoot: 'D:/Games' }));
+  backup.restore(b, files, { keepSettings: { installRoot: 'D:/Games' } });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(b, 'settings.json'), 'utf8')), { lang: 'nl', installRoot: 'D:/Games' });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(b, 'playtime.json'), 'utf8')).railrove.plays, 1);
+  assert.equal(fs.readFileSync(path.join(b, 'reports', 'railrove-1234567890123.txt'), 'utf8'), 'report');
+  assert.ok(!fs.readdirSync(b).some((f) => /developer|friend|pem/.test(f)));
+  // hand-made zips
+  const mk = (entries) => new Promise((res) => { const z = new yazl.ZipFile(); for (const [n, d] of entries) z.addBuffer(Buffer.from(d), n); const out = path.join(tmp(), 'x.zip'); z.outputStream.pipe(fs.createWriteStream(out)).on('close', () => res(out)); z.end(); });
+  const mark = [backup.MARK, JSON.stringify({ app: 'Zero Launcher' })];
+  await assert.rejects(backup.read(await mk([['settings.json', '{}']]), opts), /not a Zero Launcher backup/);
+  const slip = await mk([mark, ['xx/evil.json', '{}']]);
+  fs.writeFileSync(slip, Buffer.from(fs.readFileSync(slip).toString('latin1').split('xx/evil.json').join('../evil.json'), 'latin1'));
+  await assert.rejects(backup.read(slip, opts), /Unsafe file path|invalid relative path/);
+  const empty = await backup.read(await mk([mark, ['developer.json', '{}'], ['account.json', '{"id":"nope"}'], ['playtime.json', 'not json'], ['feedback.json', '5'], ['reports/evil.exe', 'x']]), opts);
+  assert.equal(empty.files.size, 0);
+});

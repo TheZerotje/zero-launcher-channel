@@ -30,6 +30,7 @@ const projects = require('../core/projects');
 const playtime = require('../core/playtime');
 const feedback = require('../core/feedback');
 const { Log } = require('../core/log');
+const backup = require('../core/backup');
 const CHECK_ITEMS = ['starts', 'sound', 'tested', 'notes', 'picture'];
 const CHECK_LABELS = { starts: 'The game starts', sound: 'No sound bugs', tested: 'Tested by a tester', notes: "What's new is written", picture: 'Picture is set' };
 let stats = null;
@@ -59,8 +60,14 @@ function settings() { return { ...DEFAULTS, ...readJson(file('settings.json'), {
 function developer() { return readJson(file('developer.json')); }
 function friendHost() { return readJson(file('friend.json')); }
 function account() { return readJson(file('account.json')); }
+// The settings a player can change (Settings page), and the only ones a backup can bring back.
+const SETTINGS = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', startWithWindows: 'boolean', projectReminders: 'boolean', welcomed: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'], speedLimit: [0, 1, 2, 5] };
+const settingOk = (k, v) => Object.hasOwn(SETTINGS, k) && (Array.isArray(SETTINGS[k]) ? SETTINGS[k].includes(v) : typeof v === SETTINGS[k]);
+const settingsClean = (o) => Object.fromEntries(Object.entries(o || {}).filter(([k, v]) => settingOk(k, v)));
 let _log = null; // launcher log (core/log.js), on this PC only
 const log = () => _log || (_log = new Log(path.join(DATA(), 'logs')));
+const backupOpts = () => ({ reportRe: REPORT_RE, settingsClean, version: app.getVersion(),
+  accountOk: (a) => !Array.isArray(a) && typeof a.id === 'string' && testers.ID_RE.test(a.id) && typeof a.name === 'string' && a.name.length <= 32 });
 const feedbackStore = () => new feedback.FeedbackStore(file('feedback.json'));
 function publicKey() {
   const s = settings();
@@ -393,6 +400,32 @@ const api = {
   },
   reportText: (name) => fs.readFileSync(reportFile(name), 'utf8').slice(0, 200000),
   reportShow: (name) => { shell.showItemInFolder(reportFile(name)); return true; },
+  // ---- Back up my launcher data: one zip, saved only where the player picks ----
+  backupSave: async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const r = await dialog.showSaveDialog(win, { title: tr('Save a backup'), defaultPath: `zero-launcher-backup-${day}.zip`, filters: [{ name: 'Zip', extensions: ['zip'] }] });
+    if (r.canceled || !r.filePath) return null;
+    const names = await backup.make(DATA(), r.filePath, backupOpts());
+    log().info(`backup saved (${names.length} files)`);
+    return { file: r.filePath, count: names.length };
+  },
+  backupLoad: async () => {
+    const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Zip', extensions: ['zip'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const { files, at } = await backup.read(r.filePaths[0], backupOpts());
+    if (!files.size) throw new Error('This backup is empty.');
+    const ok = await dialog.showMessageBox(win, { type: 'question', buttons: [tr('Load backup'), tr('Cancel')], defaultId: 1, cancelId: 1,
+      message: tr('Load this backup?'), detail: tr('It replaces your settings, account, play time and reports with the ones from the backup ({date}). Your games stay.', { date: at ? new Date(at).toLocaleDateString() : '-' }) });
+    if (ok.response !== 0) return null;
+    // keep a copy of how it was, just in case
+    await backup.make(DATA(), path.join(DATA(), 'backups', `before-load-${Date.now()}.zip`), backupOpts()).catch(() => {});
+    const keep = readJson(file('settings.json'), {}) || {};
+    const done = backup.restore(DATA(), files, { keepSettings: keep.installRoot ? { installRoot: keep.installRoot } : {} });
+    log().info(`backup loaded (${done.length} files)`);
+    speedLimitMB = [0, 1, 2, 5].includes(settings().speedLimit) ? settings().speedLimit : 0;
+    await refresh();
+    return { count: done.length };
+  },
   // ---- launcher log (on this PC only): copy it for Zero, or show the file ----
   logCopy: () => { const text = log().tail(); require('electron').clipboard.writeText(text); return text.split('\n').filter(Boolean).length; },
   logShow: () => { log().info('log opened'); shell.showItemInFolder(log().file); return true; },
@@ -443,9 +476,7 @@ const api = {
   },
   setLaunchArgs: (id, text) => { const r = installer.setLaunchArgs(id, text); send('state', state()); return r; },
   setSetting: (k, v) => {
-    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', startWithWindows: 'boolean', projectReminders: 'boolean', welcomed: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'], speedLimit: [0, 1, 2, 5] };
-    if (!ok[k]) throw new Error('Not allowed');
-    if (Array.isArray(ok[k]) ? !ok[k].includes(v) : typeof v !== ok[k]) throw new Error('Not allowed');
+    if (!settingOk(k, v)) throw new Error('Not allowed');
     if (k === 'speedLimit') speedLimitMB = v;
     if (k === 'startWithWindows') {
       try { app.setLoginItemSettings({ openAtLogin: v, args: ['--hidden'] }); } catch {}
@@ -723,7 +754,7 @@ const SUB_ID = /^[a-z0-9][a-z0-9-]{1,40}--[a-z0-9][a-z0-9-]{1,40}--v?[0-9A-Za-z.
 const pid = (x) => V.match(x, projects.ID_RE, 'project id');
 const absPath = (x, what = 'folder') => { if (typeof x !== 'string' || x.length > 1000 || !path.isAbsolute(x) || x.includes('\0')) throw new Error('Bad input: ' + what); return x; };
 const CHECKS = {
-  logCopy: none, logShow: none,
+  logCopy: none, logShow: none, backupSave: none, backupLoad: none,
   reportsList: none, reportText: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); }, reportShow: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); },
   devProjects: none, devStatusReport: none,
   devProjectSave: ([id, patch, ...rest]) => {

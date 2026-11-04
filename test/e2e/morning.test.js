@@ -166,3 +166,45 @@ test('launcher log: things are written down on this PC; Copy launcher log; no se
     assert.deepEqual(errors, []);
   } finally { await close(app); }
 });
+
+test('back up my launcher data: save, change things, load it back (only after yes); not-a-backup is refused', async () => {
+  const { mockDialogs } = require('./helpers');
+  const demo = makeDemo();
+  const { app, win, errors } = await launch(demo.user);
+  const zip = path.join(demo.dir, 'my-backup.zip');
+  try {
+    await mockDialogs(app);
+    await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, zip);
+    fs.writeFileSync(path.join(demo.user, 'playtime.json'), JSON.stringify({ railrove: { ms: 3600000, plays: 7, days: [] } }));
+    await goto(win, 'Settings');
+    await win.locator('#set-size').selectOption('big');
+    await win.waitForTimeout(200);
+    const box = win.locator('.panel.backup');
+    await box.locator('button', { hasText: 'Save a backup' }).click();
+    await win.locator('.toast', { hasText: 'Backup saved' }).waitFor();
+    assert.ok(fs.existsSync(zip));
+    await shot(win, 'player-backup');
+    // change things, then load the backup: Cancel first -> nothing changes
+    await win.locator('#set-size').selectOption('bigger');
+    fs.writeFileSync(path.join(demo.user, 'playtime.json'), '{}');
+    await mockDialogs(app, { file: zip });
+    await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+    await box.locator('button', { hasText: 'Load a backup' }).click();
+    await win.waitForTimeout(500);
+    assert.equal(fs.readFileSync(path.join(demo.user, 'playtime.json'), 'utf8'), '{}', 'Cancel keeps everything');
+    await mockDialogs(app, { file: zip });
+    await win.locator('.panel.backup button', { hasText: 'Load a backup' }).click();
+    await win.locator('.toast', { hasText: 'Backup loaded' }).waitFor();
+    assert.equal(JSON.parse(fs.readFileSync(path.join(demo.user, 'playtime.json'), 'utf8')).railrove.plays, 7);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(demo.user, 'settings.json'), 'utf8')).textSize, 'big');
+    assert.equal(await win.locator('#set-size').inputValue(), 'big', 'the page shows the loaded settings');
+    assert.ok(fs.readdirSync(path.join(demo.user, 'backups')).some((f) => f.startsWith('before-load-')), 'old data kept just in case');
+    // a zip that is not a backup
+    const other = path.join(demo.dir, 'other.zip');
+    await require('../../core/zip').packFolder(path.join(demo.user, 'backups'), other);
+    await mockDialogs(app, { file: other });
+    await win.locator('.panel.backup button', { hasText: 'Load a backup' }).click();
+    await win.locator('.toast', { hasText: 'not a Zero Launcher backup' }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally { await close(app); }
+});

@@ -182,3 +182,11 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     feedback.json on his PC only. The code is not signed (low stakes): every value is checked on paste, and the
     account ID / tester name is shown next to each line, so Zero sees who wrote it. Same code twice = added once.
     The list lives on the Testers page (not a new menu item), so the Ctrl+1..9 keys stay the same.
+61. **Launcher log** (logs/launcher.log, on this PC only, max ~2 MB with one old file). It writes the call name and
+    why it failed, never what was typed. Tokens and private keys are blanked. Players copy it from My reports only
+    when Zero asks; nothing is sent by itself. The IPC guard lines stay exactly the same (a test checks them).
+62. **Back up my launcher data** = one zip with settings, account, play time, feedback, reports and Zero's project
+    lists. Never games, never .pem keys, developer.json or friend.json, so a backup can't make a PC "Zero's PC"
+    or a friend host. Loading: safe unpack (no ../), only known file names, JSON must parse, settings go through the
+    Settings allowed list, the install folder of this PC is kept, a confirm box first, and a copy of the old data is
+    saved in backups/ just in case.
