@@ -9,8 +9,8 @@ One desktop app (Windows) for all of Zero's games, a bit like Steam.
 - **Tester**: same app. Makes an account in Settings (ID like `SAM-4F2A-9C1B`), Zero ticks which games they may
   test. Gets test versions of only those games, with a "What to test" note, quick 👍/👎 feedback and a crash
   report that is shown before it is saved.
-- **Developer** (Zero's PC, `developer.json` in the app data folder): My games (exact status of every game, git,
-  last build), This week (goals + to-dos, new plan every Friday 12:00), Publish (Unreleased -> Testers ->
+- **Developer** (Zero's PC, `developer.json` in the app data folder): My projects (every project with exact status, git,
+  last build, Don't forget, scrap + Scrapped page, quick review, status report), This week (goals + to-dos, new plan every Friday 12:00), Publish (Unreleased -> Testers ->
   Everyone -> Upload, Go back, Export from Godot, release checklist, news, game page info, download numbers,
   Discord preview), Testers, Friend games (Approve), AI helper (`claude, ...` / `codex, ...` / `chatgpt, ...`),
   Website & host (website status only, key backup). Ctrl+K finds any game or page.
