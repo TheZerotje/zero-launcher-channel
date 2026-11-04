@@ -68,6 +68,11 @@ test('My projects: every project with exact status, boxes, filters, new folders'
     assert.equal(p.stage, 'building'); assert.ok(p.history.length >= 2);
     assert.deepEqual(saved.ignoredFolders, [path.join(demo.dir, 'drive-e', 'Old Stuff')]);
     assert.equal(snap(path.join(demo.dir, 'projects')), before, 'project folders are never changed');
+    // daily "Don't forget" message has an off switch
+    await goto(win, 'Settings');
+    await win.locator('label', { hasText: "Don't forget" }).locator('input').uncheck();
+    await win.waitForTimeout(300);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(demo.dev, 'settings.json'), 'utf8')).projectReminders, false);
     assert.deepEqual(errors, []);
   } finally { await close(app); }
 });

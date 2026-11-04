@@ -79,7 +79,8 @@ class FriendInbox {
       const bytes = fs.readFileSync(path.join(work, 'submission.json'));
       const sig = fs.readFileSync(path.join(work, 'submission.json.sig'), 'utf8');
       const meta = JSON.parse(bytes.toString('utf8'));
-      const friend = this.friends()[meta.friendId];
+      const all = this.friends();
+      const friend = typeof meta.friendId === 'string' && ID_RE.test(meta.friendId) && Object.hasOwn(all, meta.friendId) ? all[meta.friendId] : null; // no __proto__ tricks
       if (!friend) throw new Error(`Unknown friend "${meta.friendId}". Add him first.`);
       if (friend.blocked) throw new Error(`${friend.name} is blocked.`);
       if (!verify(bytes, sig, friend.publicKey)) throw new Error('Signature is wrong. This file was not made by ' + friend.name + '.');

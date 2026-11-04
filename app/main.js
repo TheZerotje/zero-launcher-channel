@@ -459,6 +459,9 @@ const api = {
   devOpenFolder: (folder) => {
     const known = (lastHub && lastHub.games.some((g) => g.folder === folder)) || (lastProjects && lastProjects.projects.some((p) => p.folders.includes(folder)));
     if (!known) throw new Error('Unknown folder');
+    // Only ever open a FOLDER: shell.openPath on a file would run it (e.g. an .exe).
+    let isDir = false; try { isDir = fs.statSync(folder).isDirectory(); } catch {}
+    if (!isDir) throw new Error('Folder not found');
     return shell.openPath(folder);
   },
   // ---- My projects ----

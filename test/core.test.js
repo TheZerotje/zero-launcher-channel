@@ -174,6 +174,11 @@ test('friend: submit, wrong key refused, other game refused, approve adds as unr
 
   inbox.setBlocked('sam', true);
   await assert.rejects(inbox.importSubmission(good), /blocked/);
+  // hack: a file that says it is from "__proto__" or "constructor" is an unknown friend
+  for (const id of ['__proto__', 'constructor', 'toString']) {
+    const trick = await makeSubmission({ friendId: id, privateKeyPem: faker.privateKey, gameId: 'sams-game', version: '0.3', buildDir: build, outDir: tmp() }).catch(() => null);
+    if (trick) await assert.rejects(inbox.importSubmission(trick), /Unknown friend/);
+  }
 });
 
 test('accounts + tester rights per game', async () => {

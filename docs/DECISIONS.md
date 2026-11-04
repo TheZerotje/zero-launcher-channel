@@ -163,3 +163,12 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     target inside the project folder, writes to a .part file first, and never touches the original folder.
 55. **Daily "Don't forget" message**: once per day, only when something is in the box. Off switch in Settings
     (developer only, "projectReminders").
+
+## Extra: hack pass (after Part 3)
+
+56. **Open folder only opens folders.** A broken or hostile screen could set a project "folder" to an .exe and ask
+    the launcher to "open" it, which would RUN it. Open folder now checks it really is a folder. (Found by
+    test/e2e/hack.test.js.)
+57. **Friend files from "__proto__"** (or "constructor") are refused as an unknown friend. Before, the friend list
+    lookup could hit a built-in JavaScript name. It was still refused later by the signature check, but now it stops
+    at the first step.

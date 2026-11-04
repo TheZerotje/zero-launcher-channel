@@ -343,6 +343,8 @@ P.settings = () => {
       onOff(!!st.easyFont, (e) => setS('easyFont', e.target.checked), t('Easy-to-read letters (Atkinson Hyperlegible)')),
       h('label', { class: 'inline' }, t('Language'), h('select', { id: 'set-lang', onchange: (e) => setS('lang', e.target.value) },
         h('option', { value: 'en', selected: st.lang !== 'nl' }, 'English'), h('option', { value: 'nl', selected: st.lang === 'nl' }, 'Nederlands')))),
+    S.mode === 'developer' ? h('div', { class: 'panel' }, h('h3', {}, 'My projects'),
+      onOff(st.projectReminders !== false, (e) => setS('projectReminders', e.target.checked), 'Show a Windows message once a day when a project is in "Don\'t forget"')) : null,
     S.mode === 'developer' ? h('div', { class: 'panel keybackup' }, h('h3', {}, 'Back up my secret key'),
       h('p', {}, 'Your secret key signs the game list. If you lose it, players cannot get updates until they reinstall. Keep a copy on a USB stick.'),
       S.keyBackup ? h('p', { class: 'dim' }, `Last backup: ${new Date(S.keyBackup.at).toLocaleDateString()} · next reminder: ${new Date(S.keyBackup.remindAt).toLocaleDateString()}`)
