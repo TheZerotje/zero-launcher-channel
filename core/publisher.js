@@ -147,6 +147,22 @@ class Channel {
     return currentRelease(g, { role: 'user' });
   }
 
+  // News for the Store (signed with the list). Newest first for players.
+  addNews({ title, text = '', image = '' }) {
+    const cat = this.read();
+    const item = { id: `n${Date.now().toString(36)}${require('crypto').randomBytes(3).toString('hex')}`, title: String(title || '').trim(), text: String(text || '').trim(), date: new Date().toISOString() };
+    if (image) item.image = String(image).trim();
+    cat.news = [item, ...(cat.news || [])].slice(0, 50);
+    this._write(cat); // validate() refuses a bad title / text / picture address
+    return item;
+  }
+
+  removeNews(id) {
+    const cat = this.read();
+    cat.news = (cat.news || []).filter((n) => n.id !== id);
+    this._write(cat);
+  }
+
   setHidden(gameId, hidden) {
     const cat = this.read();
     this._game(cat, gameId).hidden = !!hidden;

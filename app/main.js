@@ -147,6 +147,7 @@ function state() {
     mode: mode(), viewer: v, siteUrl: d && d.website ? d.website.url : settings().siteUrl,
     settings: { ...settings() }, account: account() ? { name: account().name, id: account().id } : null,
     friendHost: friendHost() ? { friendId: friendHost().friendId, name: friendHost().name } : null,
+    news: catalogue ? (catalogue.news || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date))) : [],
     games: view.games.map((g) => ({
       id: g.id, name: g.name, kind: g.kind, url: g.url, description: g.description, image: g.image, owner: g.owner,
       phoneFriendly: g.phoneFriendly, hidden: g.hidden,
@@ -321,6 +322,8 @@ const api = {
     devChannel().goBack(id); return refresh();
   },
   devHide: (id, hidden) => { devChannel().setHidden(id, hidden); return refresh(); },
+  devAddNews: (n) => { devChannel().addNews({ title: n.title, text: n.text || '', image: n.image || '' }); return refresh(); },
+  devRemoveNews: (id) => { devChannel().removeNews(id); return refresh(); },
   devSetTester: (o) => { devChannel().setTester({ accountId: o.accountId, name: o.name, games: o.games || [] }); return refresh(); },
   devRemoveTester: (id) => { devChannel().removeTester(id); return refresh(); },
   devUpload: async () => {
@@ -432,6 +435,8 @@ const CHECKS = {
   },
   devAddVersion: ([o]) => { V.obj(o); V.gameId(o.gameId); V.dir(o.buildDir, 'build folder'); V.version(o.version); V.optStr(o.notes, "what's new", 300); },
   devHide: ([id, hidden]) => { V.gameId(id); V.bool(hidden); },
+  devAddNews: ([n]) => { V.obj(n, 'news'); V.str(n.title, 'title', 80, { allowEmpty: false }); V.optStr(n.text, 'text', 600); V.url(n.image, 'picture address', { httpsOnly: true }); },
+  devRemoveNews: ([id]) => V.match(id, /^n[0-9a-z]{4,24}$/, 'news id'),
   devSetTester: ([o]) => { V.obj(o); V.str(o.accountId, 'account ID', 20); V.optStr(o.name, 'name', 32); V.list(o.games || [], 'games').forEach(V.gameId); },
   devRemoveTester: ([id]) => V.str(id, 'account ID', 20),
   devGodotExport: ([id, v, notes]) => { V.gameId(id); V.str(v, 'version', 40); if (v.trim()) V.version(v); V.optStr(notes, "what's new", 300); },

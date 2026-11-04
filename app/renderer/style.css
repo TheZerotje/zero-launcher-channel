@@ -100,3 +100,9 @@ details.git{margin-top:6px;font-size:13px}details.git summary{cursor:pointer;col
 .loading::before{content:"";display:inline-block;width:12px;height:12px;margin-right:8px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .note{background:#3d7dff1f;border:1px solid #3d7dff55;color:#b9cdff;padding:8px 14px;border-radius:10px;margin-bottom:16px;font-size:14px}
+/* ---- news ---- */
+.news-wrap{margin-bottom:22px}
+.news{display:flex;gap:16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:10px}
+.news img{width:220px;object-fit:cover;flex-shrink:0}
+.news.big{border-color:#3d7dff66}
+.news-body{padding:14px 16px}.news-body h3{margin:2px 0 6px}.news-body p{margin:0;color:var(--dim)}

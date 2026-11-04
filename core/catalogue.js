@@ -35,6 +35,16 @@ function validate(cat) {
       }
     }
   }
+  const httpsUrl = (u) => typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/.test(u) && u.length <= 500;
+  if (cat && cat.news !== undefined) {
+    if (!Array.isArray(cat.news)) errors.push('news must be a list');
+    for (const n of Array.isArray(cat.news) ? cat.news : []) {
+      if (!n || typeof n.title !== 'string' || !n.title.trim() || n.title.length > 80) errors.push('news: bad title');
+      else if (typeof n.text !== 'string' || n.text.length > 600) errors.push(`news "${n.title}": text too long`);
+      else if (!n.date || Number.isNaN(Date.parse(n.date))) errors.push(`news "${n.title}": bad date`);
+      else if (n.image && !httpsUrl(n.image)) errors.push(`news "${n.title}": picture must be an https address`);
+    }
+  }
   for (const t of (cat && cat.testers) || []) {
     if (!/^[A-Z]{1,4}-[0-9A-F]{4}-[0-9A-F]{4}$/.test(t.accountId || '') || !Array.isArray(t.games)) errors.push('bad tester entry');
   }

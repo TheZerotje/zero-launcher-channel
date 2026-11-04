@@ -567,3 +567,23 @@ test('offline: last good list is kept and used; a bad list is never cached', asy
   assert.equal(r.cat, null); assert.equal(r.offline, false);
   assert.deepEqual([1, 2, 3, 9].map(retryDelay), [60000, 300000, 1800000, 1800000]);
 });
+
+test('news: signed with the list, bad news refused', () => {
+  const keys = generateKeyPair();
+  const ch = new Channel(tmp(), keys.privateKey);
+  const a = ch.addNews({ title: 'Hello', text: 'First news' });
+  ch.addNews({ title: 'Second', text: 'More', image: 'https://x.test/p.png' });
+  let cat = ch.read();
+  assert.deepEqual(cat.news.map((n) => n.title), ['Second', 'Hello']);
+  assert.throws(() => ch.addNews({ title: '', text: 'x' }), /bad title/);
+  assert.throws(() => ch.addNews({ title: 'X', image: 'http://insecure.test/p.png' }), /https/);
+  assert.throws(() => ch.addNews({ title: 'X', image: 'javascript:alert(1)' }), /https/);
+  assert.throws(() => ch.addNews({ title: 'X', text: 'y'.repeat(601) }), /too long/);
+  ch.removeNews(a.id);
+  cat = ch.read();
+  assert.deepEqual(cat.news.map((n) => n.title), ['Second']);
+  // players see news through the signed list only
+  const { verifyAndParse } = require('../core/catalogue');
+  const bytes = fs.readFileSync(ch.file);
+  assert.equal(verifyAndParse(bytes, fs.readFileSync(ch.file + '.sig', 'utf8'), keys.publicKey).news.length, 1);
+});

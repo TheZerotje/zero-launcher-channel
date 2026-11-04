@@ -6,6 +6,7 @@ let page = null;
 let gameId = null;   // open game page
 let hubFilter = { q: '', status: 'all' };
 let storeFilter = { q: '', kind: 'all' };
+let showOldNews = false;
 let libFilter = { q: '', sort: 'played' };
 let hubData = null;
 let weekData = null;
@@ -123,6 +124,23 @@ function searchBox(id, value, placeholder, onchange) {
     oninput: (e) => { onchange(e.target.value); render(); const i = $('#' + id); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
 }
 
+// ---------------- news ----------------
+const safeImg = (u) => (typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/.test(u) ? u : null);
+function newsCard(n, big) {
+  return h('div', { class: 'news' + (big ? ' big' : '') },
+    safeImg(n.image) ? h('img', { src: safeImg(n.image), alt: '', loading: 'lazy' }) : null,
+    h('div', { class: 'news-body' }, h('div', { class: 'dim' }, new Date(n.date).toLocaleDateString()), h('h3', {}, n.title), n.text ? h('p', {}, n.text) : null));
+}
+function newsBlock() {
+  const list = S.news || [];
+  if (!list.length) return null;
+  return h('div', { class: 'news-wrap' },
+    h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:8px' }, h('h3', { style: 'margin:0' }, t('News')),
+      list.length > 1 ? h('button', { class: 'ghost small', onclick: () => { showOldNews = !showOldNews; render(); } }, showOldNews ? t('Hide older news') : t('Older news')) : null),
+    newsCard(list[0], true),
+    showOldNews ? list.slice(1).map((n) => newsCard(n, false)) : null);
+}
+
 // ---------------- pages ----------------
 const P = {};
 P.store = () => {
@@ -136,6 +154,7 @@ P.store = () => {
       h('button', { class: 'btn', onclick: () => call('openArcade') }, t('Open the Arcade'))),
     S.error ? h('div', { class: 'err' }, t(S.error)) : null,
     S.offline ? h('div', { class: 'note offline' }, t('Offline – showing your games from last time')) : null,
+    newsBlock(),
     h('div', { class: 'row tools' }, searchBox('store-q', storeFilter.q, t('Find a game…'), (v) => { storeFilter.q = v; }),
       h('div', { class: 'row chips' }, kinds.map(([k, l]) => h('button', { class: 'chip' + (storeFilter.kind === k ? ' on' : ''), onclick: () => { storeFilter.kind = k; render(); } }, l)))),
     pc.length ? [h('h3', {}, t('PC games')), h('div', { class: 'grid' }, pc.map(card))] : null,
@@ -368,6 +387,18 @@ P['dev-publish'] = () => {
         toast('Added as Unreleased'); set(await call('state'));
       } }, 'Pick build folder & add version'),
       godotBox(g))),
+    h('div', { class: 'panel' }, h('h3', {}, 'Write news'),
+      h('p', { class: 'dim' }, 'Shows at the top of the Store for players after you press Upload now.'),
+      h('div', { class: 'form' },
+        h('label', {}, 'Title', h('input', { id: 'news-title', maxlength: 80, placeholder: 'Railrove 0.20 is out!' })),
+        h('label', {}, 'Picture address (optional)', h('input', { id: 'news-img', placeholder: 'https://…png' }))),
+      h('label', {}, 'Short text', h('textarea', { id: 'news-text', maxlength: 600, placeholder: 'New wagons, new world. Have fun!' })),
+      h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: async () => {
+        set(await call('devAddNews', { title: $('#news-title').value.trim(), text: $('#news-text').value.trim(), image: $('#news-img').value.trim() }));
+        toast('News added. Press Upload now to send it to players.');
+      } }, 'Add news')),
+      (S.news || []).length ? h('table', { style: 'margin-top:12px' }, (S.news || []).map((n) => h('tr', {}, h('td', { class: 'dim' }, new Date(n.date).toLocaleDateString()), h('td', {}, n.title),
+        h('td', {}, h('button', { class: 'ghost small', onclick: () => call('devRemoveNews', n.id).then(set) }, 'Remove'))))) : null),
     h('div', { class: 'panel' }, h('h3', {}, 'Add a game'),
       h('div', { class: 'form' },
         h('label', {}, 'Game id', h('input', { id: 'ng-id', placeholder: 'railrove' })),

@@ -81,3 +81,6 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     shown in the Library (the game name is now saved at install) and can be played.
 28. **Retry**: after a failed check the launcher tries again by itself after 1 minute, then 5 minutes, then
     every 30 minutes, until it works.
+29. **News** lives in the signed game list (`news: [{id, title, text, date, image?}]`), max 50 items.
+    Title max 80 letters, text max 600. A picture must be an https address (checked when Zero saves and again when
+    players load the list). Zero can also remove news.
