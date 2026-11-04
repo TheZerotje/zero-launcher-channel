@@ -27,6 +27,7 @@ const { DownloadStats } = require('../core/stats');
 const discord = require('../core/discord');
 const keybackup = require('../core/keybackup');
 const projects = require('../core/projects');
+const playtime = require('../core/playtime');
 const CHECK_ITEMS = ['starts', 'sound', 'tested', 'notes', 'picture'];
 const CHECK_LABELS = { starts: 'The game starts', sound: 'No sound bugs', tested: 'Tested by a tester', notes: "What's new is written", picture: 'Picture is set' };
 let stats = null;
@@ -234,6 +235,7 @@ function state() {
   const updates = catalogue ? findUpdates(catalogue, inst, v).map((u) => u.game.id) : [];
   const d = developer();
   const scrapped = d ? scrappedIds() : new Set();
+  const played = playtime.all(file('playtime.json'));
   return {
     mode: mode(), viewer: v, siteUrl: d && d.website ? d.website.url : settings().siteUrl,
     settings: { ...settings() }, account: account() ? { name: account().name, id: account().id } : null,
@@ -249,6 +251,7 @@ function state() {
       installed: inst[g.id] || null, updateReady: updates.includes(g.id),
       running: installer.isRunning(g.id), job: publicJob(queue.get(g.id)),
       scrapped: d ? scrapped.has(g.id) : undefined,
+      playtime: played[g.id] || null,
     })),
     testers: d && catalogue ? catalogue.testers || [] : undefined,
     uploadNeeded: d ? uploadNeeded() : undefined,
@@ -392,7 +395,10 @@ const api = {
     const g = catalogue && catalogue.games.find((x) => x.id === id);
     if (g && g.kind === 'web') { openWebGame(g.url, g.name); return true; }
     const version = (installer.installed()[id] || {}).version;
+    const rel = g && (g.releases || []).find((r) => r.version === version);
+    const isTest = !!(rel && rel.state === 'testing');
     installer.play(id, (code, err, ms) => {
+      try { playtime.record(file('playtime.json'), id, err ? 0 : ms, { test: isTest }); } catch {}
       if (crash.isCrash(code, ms, err)) crashes.set(id, { code: err ? String(err.code || err.message) : code, version, at: new Date().toISOString() });
       send('state', state());
       if (catalogue && settings().autoUpdate) autoUpdate();
@@ -425,7 +431,7 @@ const api = {
   },
   setLaunchArgs: (id, text) => { const r = installer.setLaunchArgs(id, text); send('state', state()); return r; },
   setSetting: (k, v) => {
-    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', startWithWindows: 'boolean', projectReminders: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'], speedLimit: [0, 1, 2, 5] };
+    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', startWithWindows: 'boolean', projectReminders: 'boolean', welcomed: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'], speedLimit: [0, 1, 2, 5] };
     if (!ok[k]) throw new Error('Not allowed');
     if (Array.isArray(ok[k]) ? !ok[k].includes(v) : typeof v !== ok[k]) throw new Error('Not allowed');
     if (k === 'speedLimit') speedLimitMB = v;

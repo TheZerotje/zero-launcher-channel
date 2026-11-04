@@ -909,3 +909,23 @@ test('projects: archive zip keeps the original folder and refuses a target insid
   await require('../core/zip').unpack(f1, out);
   assert.equal(fs.readFileSync(path.join(out, 'sub', 'a.txt'), 'utf8'), 'hello');
 });
+
+test('play time + badges: added up per game, capped per session, kept on this PC only', () => {
+  const pt = require('../core/playtime');
+  const file = path.join(tmp(), 'playtime.json');
+  const day = (n) => new Date(2026, 10, n, 12);
+  let s = pt.record(file, 'railrove', 10 * 60000, { now: day(1) });
+  assert.equal(s.plays, 1); assert.deepEqual(s.badges.map((b) => b.id), ['first']);
+  s = pt.record(file, 'railrove', 55 * 60000, { now: day(1) });
+  assert.deepEqual(s.badges.map((b) => b.id), ['first', 'hour']);
+  for (let d = 2; d <= 5; d++) s = pt.record(file, 'railrove', 60000, { now: day(d) });
+  assert.ok(s.badges.some((b) => b.id === 'days5'));
+  s = pt.record(file, 'railrove', 99 * 3600000, { now: day(6), test: true }); // left open for days
+  assert.equal(s.ms, 10 * 60000 + 55 * 60000 + 4 * 60000 + pt.MAX_SESSION);
+  assert.deepEqual(s.badges.map((b) => b.id), ['first', 'hour', 'days5', 'hours10', 'tester']);
+  assert.throws(() => pt.record(file, '../x', 1), /Bad game id/);
+  pt.record(file, '__proto__'.replace(/_/g, 'a'), 1); // fine id
+  assert.deepEqual(Object.keys(pt.all(file)).sort(), ['aaprotoaa', 'railrove']);
+  assert.equal(pt.pretty(30000), 'less than 1 min'); assert.equal(pt.pretty(135 * 60000), '2 h 15 min'); assert.equal(pt.pretty(15 * 60000), '15 min');
+  assert.equal(({}).ms, undefined);
+});

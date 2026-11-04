@@ -52,6 +52,7 @@ function toast(text, kind = 'info') {
   $('#toasts').append(el);
   setTimeout(() => el.remove(), kind === 'error' ? 8000 : 4000);
 }
+const playTime = (ms) => { const m = Math.floor((ms || 0) / 60000), hr = Math.floor(m / 60); return m < 1 ? t('less than 1 min') : hr ? t('{h} h {m} min', { h: hr, m: m % 60 }) : t('{m} min', { m }); };
 const mb = (n) => (n < 104858 ? '< 0.1' : (n / 1048576).toFixed(n > 1048576 * 10 ? 0 : 1)) + ' MB';
 const initials = (n) => String(n || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const onOff = (checked, onchange, label) => h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked, onchange }), label);
@@ -244,10 +245,18 @@ P.store = () => {
   const browsing = !storeFilter.q && storeFilter.kind === 'all';
   const fresh = browsing ? G.filter((g) => recent(g.addedAt, 30) && !isComingSoon(g)) : [];
   const updated = browsing ? G.filter((g) => !fresh.includes(g) && g.kind === 'pc' && recent(g.updatedAt, 14)) : [];
+  const again = browsing ? G.filter((g) => g.installed && g.installed.lastPlayed).sort((a, b) => b.installed.lastPlayed.localeCompare(a.installed.lastPlayed)).slice(0, 3) : [];
   const soon = browsing ? G.filter(isComingSoon).sort((a, b) => a.comingSoon.localeCompare(b.comingSoon)) : [];
   const section = (title, games, cls) => (games.length ? [h('h3', { class: 'section ' + cls }, title), h('div', { class: 'grid' }, games.map(card))] : null);
   return [
     h('h1', {}, t('Store')), h('p', { class: 'sub' }, t("All of Zero's games. Website games play right away, PC games install.")),
+    S.mode !== 'developer' && !(S.settings || {}).welcomed ? h('div', { class: 'welcome panel' },
+      h('h2', {}, t('Welcome to Zero Launcher!')),
+      h('ol', { class: 'steps' },
+        h('li', {}, h('b', {}, '1. '), t('Pick a game below.')),
+        h('li', {}, h('b', {}, '2. '), t('Press the big button: Play or Install.')),
+        h('li', {}, h('b', {}, '3. '), t('That is it. Games update by themselves.'))),
+      h('button', { class: 'btn', onclick: async () => { set(await call('setSetting', 'welcomed', true)); } }, t("OK, let's play!"))) : null,
     h('div', { class: 'hero' }, h('div', {}, h('h2', {}, t("Zero's Arcade")), h('div', { class: 'dim' }, t('Every website game, inside the launcher.'))),
       h('button', { class: 'btn', onclick: () => call('openArcade') }, t('Open the Arcade'))),
     S.error ? h('div', { class: 'err' }, t(S.error)) : null,
@@ -255,10 +264,11 @@ P.store = () => {
     newsBlock(),
     h('div', { class: 'row tools' }, searchBox('store-q', storeFilter.q, t('Find a game…'), (v) => { storeFilter.q = v; }),
       h('div', { class: 'row chips' }, kinds.map(([k, l]) => h('button', { class: 'chip' + (storeFilter.kind === k ? ' on' : ''), onclick: () => { storeFilter.kind = k; render(); } }, l)))),
+    section(t('Continue playing'), again, 's-again'),
     section(t('New'), fresh, 's-new'),
     section(t('Recently updated'), updated, 's-updated'),
     section(t('Coming soon'), soon, 's-soon'),
-    browsing && (fresh.length || updated.length || soon.length) ? h('h2', { class: 'all-games' }, t('All games')) : null,
+    browsing && (again.length || fresh.length || updated.length || soon.length) ? h('h2', { class: 'all-games' }, t('All games')) : null,
     pc.filter((g) => !isComingSoon(g)).length ? [h('h3', {}, t('PC games')), h('div', { class: 'grid' }, pc.filter((g) => !isComingSoon(g)).map(card))] : null,
     web.length ? [h('h3', { style: 'margin-top:26px' }, t('Website games')), h('div', { class: 'grid' }, web.map(card))] : null,
     !G.length && !S.error ? h('div', { class: 'empty' }, t('No games yet. Check back soon!')) : null,
@@ -303,6 +313,9 @@ P.game = () => {
     rel && rel.state === 'testing' && rel.testNotes ? h('div', { class: 'panel testbox' }, h('h3', {}, t('What to test')), h('p', {}, rel.testNotes)) : null,
     rel && rel.state === 'testing' ? feedbackBox(g) : null,
     gallery(g),
+    g.playtime ? h('div', { class: 'panel playtime' }, h('h3', {}, t('Your play time')),
+      h('p', { class: 'big-time' }, playTime(g.playtime.ms), h('span', { class: 'dim' }, '  · ' + (g.playtime.plays === 1 ? t('played once') : t('played {n} times', { n: g.playtime.plays })))),
+      g.playtime.badges.length ? h('div', { class: 'row badges' }, g.playtime.badges.map((b) => h('span', { class: 'badge-chip b-' + b.id }, '★ ' + t(b.label)))) : null) : null,
     rel && rel.notes ? h('div', { class: 'panel' }, h('h3', {}, t("What's new")), h('p', {}, rel.notes)) : null,
     h('div', { class: 'row extras' },
       g.hasTrailer ? h('button', { class: 'ghost', onclick: () => call('openTrailer', g.id) }, '▶ ' + t('Watch trailer')) : null,
