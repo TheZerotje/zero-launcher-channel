@@ -105,3 +105,64 @@ test('game pages: gallery with big view + arrows, trailer, store sections with c
     await shot(win, 'player-game-page-extras');
   } finally { await close(app); }
 });
+
+test('tester helpers: what to test (purple box), quick feedback, crash report shown before saving', async () => {
+  const demo = makeDemo();
+  let { app, win } = await launch(demo.dev);
+  try {
+    await goto(win, 'Publish');
+    const row = win.locator('tr', { hasText: 'v0.20.0' });
+    await row.locator('input.testnotes').fill('Try the new bridge and the night sky');
+    await row.locator('button', { hasText: 'Save' }).click();
+    await win.locator('.toast', { hasText: 'what to test' }).waitFor();
+  } finally { await close(app); }
+  const appData = path.join(demo.dir, 'appdata');
+  const logs = path.join(appData, 'Godot', 'app_userdata', 'Railrove', 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  fs.writeFileSync(path.join(logs, 'godot.log'), 'Godot Engine v4.7\nERROR: Bridge script failed at line 42\n');
+  ({ app, win } = await launch(demo.player, { ZL_GODOT_APPDATA: appData }));
+  try {
+    await win.locator('.card b', { hasText: 'Railrove' }).first().click();
+    const box = win.locator('.testbox');
+    await box.waitFor();
+    assert.match(await box.textContent(), /Try the new bridge/);
+    await win.locator('.vote[data-v="up"]').click();
+    await win.fill('#fb-text', 'Bridge feels great');
+    await win.locator('button', { hasText: 'Send feedback' }).click();
+    await win.locator('.toast', { hasText: 'Feedback saved' }).waitFor();
+    await shot(win, 'tester-game-page');
+    const rep = fs.readdirSync(path.join(demo.player, 'reports'));
+    assert.match(fs.readFileSync(path.join(demo.player, 'reports', rep[0]), 'utf8'), /Test feedback for version 0\.20\.0: 👍[\s\S]*Bridge feels great/);
+    // install + crash
+    await win.locator('.game-info button', { hasText: 'Install' }).click();
+    await win.locator('.game-info button', { hasText: 'Play' }).waitFor({ timeout: 20000 });
+    if (process.platform !== 'win32') {
+      const inst = JSON.parse(fs.readFileSync(path.join(demo.player, 'library', 'installed.json'), 'utf8')).railrove;
+      const exe = path.join(inst.dir, inst.exe);
+      fs.writeFileSync(exe, '#!/bin/sh\nexit 3\n'); fs.chmodSync(exe, 0o755);
+      await win.locator('.game-info button', { hasText: 'Play' }).click();
+      const crash = win.locator('.panel.crash');
+      await crash.waitFor({ timeout: 10000 });
+      assert.equal(fs.readdirSync(path.join(demo.player, 'reports')).length, 1, 'nothing saved before the player says yes');
+      await crash.locator('button', { hasText: 'Show crash report' }).click();
+      const pre = crash.locator('.crash-text');
+      await pre.waitFor();
+      const text = await pre.textContent();
+      assert.match(text, /Exit code: 3/); assert.match(text, /Bridge script failed at line 42/);
+      await shot(win, 'tester-crash-report');
+      await crash.locator('button', { hasText: 'Save and copy report' }).click();
+      await win.locator('.toast', { hasText: 'Crash report saved' }).waitFor();
+      assert.equal(await win.locator('.panel.crash').count(), 0);
+      assert.ok(fs.readdirSync(path.join(demo.player, 'reports')).some((f) => f.includes('-crash-')));
+    }
+  } finally { await close(app); }
+  // a normal player has no feedback box for released versions
+  ({ app, win } = await launch(demo.user));
+  try {
+    await win.locator('.card b', { hasText: 'Railrove' }).first().click();
+    await win.locator('h1', { hasText: 'Railrove' }).waitFor();
+    assert.equal(await win.locator('.feedback').count(), 0);
+    const r = await win.evaluate(() => window.zl.call('feedback', 'railrove', 'up', '').then(() => 'ok', (e) => e.message));
+    assert.match(r, /only for test versions/);
+  } finally { await close(app); }
+});

@@ -22,6 +22,7 @@ const strings = require('./renderer/strings');
 const godot = require('../core/godot');
 const { shortcutPlan, playArg } = require('../core/shortcut');
 const { isTrailer } = require('../core/catalogue');
+const crash = require('../core/crash');
 const crypto = require('crypto');
 
 const DEFAULTS = {
@@ -39,6 +40,7 @@ const { V } = require('../core/validate');
 let win = null, tray = null, installer = null, ai = null, lastHub = null;
 let catalogue = null, catalogueError = null, lastCheck = null, offline = false, failures = 0, retryTimer = null;
 let queue = null; // downloads: one at a time (core/queue.js)
+const crashes = new Map(); // gameId -> { code, version, at } (until the player answers)
 const MUTED = !!process.env.ZL_MUTE;
 global.zlNotices = []; // every notification we showed (tests read this)
 
@@ -162,6 +164,7 @@ function state() {
     })),
     testers: d && catalogue ? catalogue.testers || [] : undefined,
     uploadNeeded: d ? uploadNeeded() : undefined,
+    crashes: [...crashes.entries()].map(([gameId, c]) => ({ gameId, ...c })),
     error: catalogueError, offline, lastCheck, muted: MUTED, nextRetry: failures ? retryDelay(failures) : null,
   };
 }
@@ -226,6 +229,33 @@ const api = {
   pause: (id) => queue.pause(id),
   resume: (id) => queue.resume(id),
   cancel: (id) => { const j = queue.get(id); return queue.cancel(id, () => { if (j && j.version) installer.removePart(id, j.version); }); },
+  // What a crash report would hold. Shown to the player BEFORE anything is saved.
+  crashPreview: (id) => {
+    const c = crashes.get(id);
+    if (!c) throw new Error('No crash for this game');
+    const g = (catalogue && catalogue.games.find((x) => x.id === id)) || { name: id };
+    const inst = installer.installed()[id] || {};
+    const appData = process.env.ZL_GODOT_APPDATA || app.getPath('appData');
+    const logFile = crash.godotLogFile(appData, [g.name, inst.exe ? path.basename(inst.exe, path.extname(inst.exe)) : null]);
+    return crash.crashReport({ gameName: g.name || id, gameId: id, version: c.version, code: c.code, launcher: app.getVersion(), platform: `${process.platform} ${require('os').release()}`, account: account() && account().id, logFile });
+  },
+  crashSend: (id) => {
+    const text = api.crashPreview(id);
+    crashes.delete(id);
+    const out = path.join(DATA(), 'reports', `${id}-crash-${Date.now()}.txt`);
+    writeFileAtomic(out, text);
+    send('state', state());
+    return { file: out, text };
+  },
+  crashDismiss: (id) => { crashes.delete(id); send('state', state()); return true; },
+  // Quick feedback on a TEST version: thumbs up / down + optional text. Saved like a report.
+  feedback: (id, vote, text) => {
+    const g = catalogue && catalogue.games.find((x) => x.id === id);
+    if (!g) throw new Error('Game not found');
+    const rel = currentRelease(g, viewer());
+    if (!rel || rel.state !== 'testing') throw new Error('Feedback is only for test versions');
+    return api.report(id, `Test feedback for version ${rel.version}: ${vote === 'up' ? '👍 good' : '👎 not good'}\n${String(text || '').slice(0, 2000)}`);
+  },
   report: (id, text) => {
     const g = catalogue && catalogue.games.find((x) => x.id === id);
     if (!g) throw new Error('Game not found');
@@ -255,7 +285,12 @@ const api = {
   play: (id) => {
     const g = catalogue && catalogue.games.find((x) => x.id === id);
     if (g && g.kind === 'web') { openWebGame(g.url, g.name); return true; }
-    installer.play(id, () => { send('state', state()); if (catalogue && settings().autoUpdate) autoUpdate(); });
+    const version = (installer.installed()[id] || {}).version;
+    installer.play(id, (code, err, ms) => {
+      if (crash.isCrash(code, ms, err)) crashes.set(id, { code: err ? String(err.code || err.message) : code, version, at: new Date().toISOString() });
+      send('state', state());
+      if (catalogue && settings().autoUpdate) autoUpdate();
+    });
     send('state', state()); return true;
   },
   openArcade: () => { openWebGame(state().siteUrl); return true; },
@@ -346,6 +381,7 @@ const api = {
     devChannel().setGameInfo(id, { screenshots: o.screenshots, trailer: o.trailer, comingSoon: o.comingSoon, description: o.description, image: o.image });
     return refresh();
   },
+  devSetTestNotes: (id, v, text) => { devChannel().setTestNotes(id, v, text); return refresh(); },
   devAddNews: (n) => { devChannel().addNews({ title: n.title, text: n.text || '', image: n.image || '' }); return refresh(); },
   devRemoveNews: (id) => { devChannel().removeNews(id); return refresh(); },
   devSetTester: (o) => { devChannel().setTester({ accountId: o.accountId, name: o.name, games: o.games || [] }); return refresh(); },
@@ -459,7 +495,9 @@ const CHECKS = {
   },
   devAddVersion: ([o]) => { V.obj(o); V.gameId(o.gameId); V.dir(o.buildDir, 'build folder'); V.version(o.version); V.optStr(o.notes, "what's new", 300); },
   devHide: ([id, hidden]) => { V.gameId(id); V.bool(hidden); },
-  openTrailer: gid, makeShortcut: gid,
+  openTrailer: gid, makeShortcut: gid, crashPreview: gid, crashSend: gid, crashDismiss: gid,
+  feedback: ([id, vote, text]) => { V.gameId(id); V.oneOf(vote, ['up', 'down'], 'vote'); V.optStr(text, 'text', 2000); },
+  devSetTestNotes: ([id, v, text]) => { V.gameId(id); V.version(v); V.str(text, 'what to test', 600); },
   setLaunchArgs: ([id, text]) => { V.gameId(id); V.str(text, 'launch options', 300); },
   devSetGameInfo: ([id, o]) => {
     V.gameId(id); V.obj(o, 'game info');

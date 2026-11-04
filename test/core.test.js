@@ -629,3 +629,32 @@ test('game pages: screenshots, trailer, coming soon, launch options, shortcut pl
   assert.equal(playArg(['--play=../../evil']), null);
   assert.equal(safeFileName('..'), 'Game');
 });
+
+test('tester helpers: what to test note, crash rules, Godot log lines', () => {
+  const keys = generateKeyPair();
+  const ch = new Channel(tmp(), keys.privateKey);
+  ch.upsertGame({ id: 'tg', name: 'T', kind: 'pc' });
+  ch.read();
+  const cat = ch.read(); cat.games[0].releases.push({ version: '1.0', state: 'testing', exe: 'a.exe', file: { url: 'x', size: 1, sha256: 'a'.repeat(64) } });
+  ch._write(cat);
+  ch.setTestNotes('tg', '1.0', 'Try the new bridge');
+  assert.equal(ch.read().games[0].releases[0].testNotes, 'Try the new bridge');
+  assert.throws(() => ch.setTestNotes('tg', '1.0', 'x'.repeat(601)), /too long/);
+  const crash = require('../core/crash');
+  assert.equal(crash.isCrash(1, 5000), true);
+  assert.equal(crash.isCrash(0, 5000), false, 'normal close');
+  assert.equal(crash.isCrash(1, 3 * 60 * 1000), false, 'after 2 minutes it is not a crash');
+  assert.equal(crash.isCrash(null, 100, new Error('ENOENT')), true);
+  const appData = tmp();
+  const logs = path.join(appData, 'Godot', 'app_userdata', 'Railrove', 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  fs.writeFileSync(path.join(logs, 'godot.log'), Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\n'));
+  const f = crash.godotLogFile(appData, ['../evil', 'Railrove']);
+  assert.equal(f, path.join(logs, 'godot.log'));
+  assert.equal(crash.godotLogFile(appData, ['..', 'a/b']), null);
+  const text = crash.crashReport({ gameName: 'Railrove', gameId: 'railrove', version: '0.20.0', code: 3, launcher: '0.3.0', platform: 'win32', logFile: f });
+  assert.match(text, /Exit code: 3/);
+  assert.match(text, /line 300/);
+  assert.match(text, /line 101\n/);
+  assert.doesNotMatch(text, /line 100\n/, 'only the last 200 lines');
+});

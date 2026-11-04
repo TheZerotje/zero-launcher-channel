@@ -39,6 +39,7 @@ function validate(cat) {
     for (const r of g.releases || []) {
       if (!versions.isValid(r.version)) errors.push(`${g.id}: bad version ${r.version}`);
       if (!['unreleased', 'testing', 'released', 'pulled'].includes(r.state)) errors.push(`${g.id} ${r.version}: bad state`);
+      if (r.testNotes !== undefined && (typeof r.testNotes !== 'string' || r.testNotes.length > 600)) errors.push(`${g.id} ${r.version}: "what to test" too long`);
       if (g.kind === 'pc') {
         if (!r.file || !/^[a-f0-9]{64}$/.test(r.file.sha256 || '')) errors.push(`${g.id} ${r.version}: sha256 missing`);
         if (!r.exe || r.exe.includes('..') || path.isAbsolute(r.exe)) errors.push(`${g.id} ${r.version}: bad exe`);

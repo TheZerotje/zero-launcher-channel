@@ -152,6 +152,39 @@ function newsBlock() {
     showOldNews ? list.slice(1).map((n) => newsCard(n, false)) : null);
 }
 
+// ---------------- tester feedback + crash reports ----------------
+function feedbackBox(g) {
+  let vote = null;
+  const pick = (v) => (e) => { vote = v; e.target.closest('.feedback').querySelectorAll('.vote').forEach((b) => b.classList.toggle('on', b.dataset.v === v)); };
+  return h('div', { class: 'panel feedback' }, h('h3', {}, t('Quick feedback on this test version')),
+    h('div', { class: 'row' },
+      h('button', { class: 'vote', 'data-v': 'up', 'aria-label': t('Good'), onclick: pick('up') }, '👍'),
+      h('button', { class: 'vote', 'data-v': 'down', 'aria-label': t('Not good'), onclick: pick('down') }, '👎')),
+    h('textarea', { id: 'fb-text', maxlength: 2000, placeholder: t('Anything else? (you can leave this empty)'), style: 'margin-top:10px' }),
+    h('button', { class: 'btn', style: 'margin-top:10px', onclick: async () => {
+      if (!vote) return toast(t('Press 👍 or 👎 first.'), 'error');
+      const r = await call('feedback', g.id, vote, $('#fb-text').value.trim());
+      await call('copy', r.text);
+      toast(t('Thank you! Feedback saved and copied. Send it to Zero.'));
+      $('#fb-text').value = '';
+    } }, t('Send feedback')));
+}
+let crashText = {}; // gameId -> preview text
+function crashBanner() {
+  const list = (S.crashes || []);
+  if (!list.length) return null;
+  return list.map((c) => {
+    const g = S.games.find((x) => x.id === c.gameId) || { name: c.gameId };
+    return h('div', { class: 'panel crash' }, h('h3', {}, t('{name} closed with an error', { name: g.name })),
+      h('p', {}, t('Do you want to make a crash report for Zero? You can see everything in it first.')),
+      crashText[c.gameId] ? h('pre', { class: 'log small crash-text' }, crashText[c.gameId]) : null,
+      h('div', { class: 'row' },
+        !crashText[c.gameId] ? h('button', { class: 'btn', onclick: async () => { crashText[c.gameId] = await call('crashPreview', c.gameId); render(); } }, t('Show crash report'))
+          : h('button', { class: 'btn', onclick: async () => { const r = await call('crashSend', c.gameId); await call('copy', r.text); delete crashText[c.gameId]; toast(t('Crash report saved and copied. Send it to Zero.')); } }, t('Save and copy report')),
+        h('button', { class: 'ghost', onclick: async () => { delete crashText[c.gameId]; set(await call('crashDismiss', c.gameId)); } }, t('No thanks'))));
+  });
+}
+
 // ---------------- picture gallery ----------------
 let bigPic = null; // { gameId, i }
 function gallery(g) {
@@ -252,6 +285,8 @@ P.game = () => {
       h('h1', {}, g.name), h('p', { class: 'sub' }, g.description || ''),
       rel ? h('p', { class: 'dim' }, t('Version {v}', { v: rel.version })) : null,
       actions(g))),
+    rel && rel.state === 'testing' && rel.testNotes ? h('div', { class: 'panel testbox' }, h('h3', {}, t('What to test')), h('p', {}, rel.testNotes)) : null,
+    rel && rel.state === 'testing' ? feedbackBox(g) : null,
     gallery(g),
     rel && rel.notes ? h('div', { class: 'panel' }, h('h3', {}, t("What's new")), h('p', {}, rel.notes)) : null,
     h('div', { class: 'row extras' },
@@ -434,7 +469,10 @@ P['dev-publish'] = () => {
     h('td', {}, h('div', { class: 'row' },
       r.state === 'unreleased' ? h('button', { class: 'btn test small', onclick: () => call('devToTesters', g.id, r.version).then(set) }, 'Send to testers') : null,
       r.state === 'unreleased' || r.state === 'testing' ? h('button', { class: 'btn good small', onclick: () => call('devRelease', g.id, r.version).then(set) }, 'Release to everyone') : null,
-      r.state === 'testing' ? h('button', { class: 'ghost small', onclick: () => call('devUnrelease', g.id, r.version).then(set) }, 'Back to unreleased') : null)));
+      r.state === 'testing' ? h('button', { class: 'ghost small', onclick: () => call('devUnrelease', g.id, r.version).then(set) }, 'Back to unreleased') : null),
+      r.state === 'unreleased' || r.state === 'testing' ? h('div', { class: 'row', style: 'margin-top:6px' },
+        h('input', { class: 'testnotes', id: `tn-${g.id}-${r.version.replace(/\W/g, '_')}`, value: r.testNotes || '', maxlength: 600, placeholder: 'What to test (for testers)', style: 'flex:1;min-width:200px' }),
+        h('button', { class: 'ghost small', onclick: async (e) => { const v = e.target.parentElement.querySelector('input').value.trim(); set(await call('devSetTestNotes', g.id, r.version, v)); toast('Saved "what to test"'); } }, 'Save')) : null));
   const all = S.games;
   return [h('h1', {}, 'Publish'), h('p', { class: 'sub' }, 'New versions start as Unreleased. Then: Send to testers → Release to everyone → Upload.'),
     h('div', { class: 'panel' + (S.uploadNeeded ? ' needs-upload' : '') }, h('div', { class: 'row', style: 'justify-content:space-between' },
@@ -603,7 +641,7 @@ function render() {
   renderNav();
   const keepScroll = $('#main').scrollTop;
   const m = $('#main'); m.innerHTML = '';
-  m.append(...[gameId ? P.game() : P[page]()].flat(3).filter(Boolean));
+  m.append(...[crashBanner(), gameId ? P.game() : P[page]()].flat(3).filter(Boolean));
   m.scrollTop = keepScroll;
   const log = $('#ai-log'); if (log) log.scrollTop = log.scrollHeight;
 }

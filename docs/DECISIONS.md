@@ -95,3 +95,10 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     (only a valid game id is accepted). Windows only; on other systems you get a clear message.
 33. **Launch options** are saved per installed game (max 300 letters). They are split into words and given to the
     game directly, without a shell, so they can never run other commands.
+34. **Tester feedback and crash reports are saved like "Report a problem"**: a text file in the reports folder,
+    copied so the tester can paste it to Zero. Nothing goes over the internet by itself. Feedback only works for a
+    TEST version (checked in the main process too).
+35. **Crash** = the game closed with an error code (not 0) within 2 minutes, or could not start. The player first
+    sees "<game> closed with an error", then can press "Show crash report" to read the exact text, and only then
+    "Save and copy report" (or "No thanks"). The Godot log is looked up by the game's name and its .exe name under
+    %APPDATA%\Godot\app_userdata\ (names with slashes or ".." are ignored); only the last 200 lines are added.

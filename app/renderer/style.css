@@ -119,3 +119,9 @@ h3.section{margin-top:6px}h2.all-games{margin:30px 0 6px;font-size:20px}
 .extras{margin-bottom:18px}
 details.launch summary,details.gameinfo summary{cursor:pointer;font-weight:600}
 details.gameinfo{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}details.gameinfo .form{margin-top:10px}
+/* ---- tester helpers ---- */
+.panel.testbox{background:#a66bff1f;border-color:#a66bff77}.panel.testbox h3{color:#cfb2ff}
+.vote{all:unset;cursor:pointer;font-size:30px;padding:6px 16px;border-radius:12px;background:var(--panel2);border:2px solid transparent}
+.vote.on{border-color:var(--accent);background:#3d7dff33}
+.panel.crash{border-color:#e5484d88;background:#e5484d14}
+.crash-text{max-height:260px}

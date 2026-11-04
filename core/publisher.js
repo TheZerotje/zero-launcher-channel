@@ -93,6 +93,17 @@ class Channel {
     return release;
   }
 
+  // "What to test" note for testers (shown in a purple box on the game page).
+  setTestNotes(gameId, version, text) {
+    const cat = this.read();
+    const r = this._game(cat, gameId).releases.find((x) => x.version === version);
+    if (!r) throw new Error('No such version');
+    const t = String(text || '').trim();
+    if (t) r.testNotes = t; else delete r.testNotes;
+    this._write(cat);
+    return r;
+  }
+
   // Zero presses "Send to testers".
   toTesters(gameId, version) {
     const cat = this.read();
