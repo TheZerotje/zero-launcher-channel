@@ -69,3 +69,6 @@ Zero was asleep. When something was unclear I picked the safest simple option an
 24. **Web game windows** may only use full screen and mouse lock (no camera, microphone, location, notifications).
     They cannot attach webviews. ChatGPT window got the same rules and sends outside links to the normal browser.
 25. **Website status check now works with https addresses too** (it only knew http before).
+26. **Keyboard for Zero**: Ctrl+1..9 opens the menu pages in this order: the 7 developer pages first
+    (My games = Ctrl+1, This week = Ctrl+2, Publish = Ctrl+3 …), then Store, Library. Ctrl+F jumps to the search box
+    on any page that has one (players too).

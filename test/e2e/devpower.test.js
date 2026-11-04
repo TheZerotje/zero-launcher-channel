@@ -63,3 +63,20 @@ test('My games: git commits, last build size, Copy path; AI helper past jobs', a
     assert.deepEqual(errors, []);
   } finally { await close(app); }
 });
+
+test('keyboard: Ctrl+1..9 pages for the developer, Ctrl+F search', async () => {
+  const demo = makeDemo();
+  const { app, win } = await launch(demo.dev);
+  try {
+    await win.keyboard.press('Control+3');
+    await win.locator('h1', { hasText: 'Publish' }).waitFor();
+    await win.keyboard.press('Control+1');
+    await win.locator('h1', { hasText: 'My games' }).waitFor();
+    await win.locator('#hub-q').waitFor();
+    await win.locator('body').click({ position: { x: 600, y: 20 } });
+    await win.keyboard.press('Control+f');
+    assert.equal(await win.evaluate(() => document.activeElement.id), 'hub-q');
+    await win.keyboard.press('Control+8');
+    await win.locator('h1', { hasText: 'Store' }).waitFor();
+  } finally { await close(app); }
+});

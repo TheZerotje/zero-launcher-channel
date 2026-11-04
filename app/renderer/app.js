@@ -268,7 +268,7 @@ function hubRow(g) {
         } }, g.status === 'needs-work' ? 'Mark fixed' : 'Needs work') : null)));
 }
 P['dev-hub'] = () => {
-  if (!hubData) { call('devHub').then((r) => { hubData = r; render(); }).catch(() => {}); return [h('h1', {}, 'My games'), h('p', { class: 'dim' }, 'Checking your folders…')]; }
+  if (!hubData) { call('devHub').then((r) => { hubData = r; render(); }).catch(() => {}); return [h('h1', {}, 'My games'), h('p', { class: 'dim loading' }, 'Checking your folders…')]; }
   const q = hubFilter.q.toLowerCase();
   const games = hubData.games.filter((g) => (!q || (g.name + ' ' + g.id + ' ' + (g.folder || '') + ' ' + (g.nextStep || '')).toLowerCase().includes(q)) && (hubFilter.status === 'all' || g.status === hubFilter.status));
   const count = (k) => hubData.games.filter((g) => g.status === k).length;
@@ -276,7 +276,7 @@ P['dev-hub'] = () => {
     STATUS_LIST.filter(([k]) => count(k)).map(([k, l]) => h('button', { class: 'chip s-' + k + (hubFilter.status === k ? ' on' : ''), onclick: () => { hubFilter.status = k; render(); } }, `${l} ${count(k)}`)));
   const folded = new Set(['released', 'scrapped']);
   const groups = STATUS_LIST.map(([k, l]) => [k, l, games.filter((g) => g.status === k)]).filter(([, , list]) => list.length);
-  const search = h('input', { id: 'hub-q', placeholder: 'Search a game, folder or next step…', value: hubFilter.q, style: 'width:100%;font-size:16px;padding:12px 14px',
+  const search = h('input', { id: 'hub-q', class: 'search', placeholder: 'Search a game, folder or next step…', value: hubFilter.q, style: 'width:100%;font-size:16px;padding:12px 14px',
     oninput: (e) => { hubFilter.q = e.target.value; render(); const i = $('#hub-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
   return [h('div', { class: 'row', style: 'justify-content:space-between' }, h('h1', {}, 'My games'),
       h('button', { class: 'ghost', onclick: async () => { hubData = await call('devHub'); render(); toast('Folders checked again'); } }, 'Check again')),
@@ -290,7 +290,7 @@ P['dev-hub'] = () => {
 };
 
 P['dev-week'] = () => {
-  if (!weekData) { call('devWeek').then((r) => { weekData = r; render(); }).catch(() => {}); return [h('h1', {}, 'This week'), h('p', { class: 'dim' }, 'Loading…')]; }
+  if (!weekData) { call('devWeek').then((r) => { weekData = r; render(); }).catch(() => {}); return [h('h1', {}, 'This week'), h('p', { class: 'dim loading' }, 'Loading…')]; }
   const W = weekData.week;
   const save = async (extra = {}) => { weekData = await call('devWeekSave', weekData.key, { ...W, ...extra }); render(); };
   const list = (items, name) => h('div', { class: 'checklist' }, items.map((it, i) => h('div', { class: 'check' + (it.done ? ' done' : '') },
@@ -399,7 +399,7 @@ P['dev-testers'] = () => {
       : h('div', { class: 'empty' }, 'No testers yet.')];
 };
 P['dev-friends'] = () => {
-  const box = h('div', {}, h('p', { class: 'dim' }, 'Loading…'));
+  const box = h('div', {}, h('p', { class: 'dim loading' }, 'Loading…'));
   call('devFriends').then(({ friends, waiting }) => {
     box.innerHTML = '';
     box.append(
@@ -514,6 +514,21 @@ window.zl.on('ai', (m) => {
   const log = $('#ai-log');
   if (log) { log.textContent = aiLog.join('\n'); log.scrollTop = log.scrollHeight; }
   if (m.end !== undefined && page === 'dev-ai') render();
+});
+// Keyboard: Ctrl+F = search box on this page (everyone). Developer: Ctrl+1..9 = pages in the menu.
+document.addEventListener('keydown', (e) => {
+  if (!S || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (e.key === 'f' || e.key === 'F') {
+    const box = document.querySelector('#main input.search, #hub-q');
+    if (box) { e.preventDefault(); box.focus(); box.select(); }
+    return;
+  }
+  if (S.mode === 'developer' && /^[1-9]$/.test(e.key)) {
+    const { p, dev, fr } = pages();
+    const all = [...dev, ...p, ...fr];
+    const target = all[Number(e.key) - 1];
+    if (target) { e.preventDefault(); go(target[0]); }
+  }
 });
 $('#refreshBtn').addEventListener('click', async () => { set(await call('refresh')); toast(t('Checked for updates')); });
 call('state').then(set);
