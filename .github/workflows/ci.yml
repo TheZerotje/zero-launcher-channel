@@ -1,0 +1,66 @@
+# Zero Launcher CI. Runs the tests and builds the Windows installer.
+# No secrets, no publishing, no code signing. Nothing is uploaded to the channel.
+name: CI
+
+on:
+  # Push runs only on main; the PR run covers the overnight branch. One run per push = one email, not two.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ZL_MUTE: '1'
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+jobs:
+  linux:
+    name: Tests (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Core tests
+        run: npm test
+      - name: Install a virtual screen for the app tests
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: App tests (real app, muted, virtual screen)
+        run: xvfb-run -a npm run test:e2e
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: docs/screens/*.png
+          if-no-files-found: ignore
+
+  windows:
+    name: Tests + installer (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Core tests
+        run: npm test
+      - name: Build the installer (never published)
+        run: npm run dist
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZeroLauncherSetup
+          path: dist/*.exe
+          if-no-files-found: error

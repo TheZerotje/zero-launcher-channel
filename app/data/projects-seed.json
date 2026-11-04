@@ -1,0 +1,337 @@
+{
+ "asOf": "2026-11-02",
+ "note": "Zero will correct this list. Games come from hub-seed.json; this adds the other projects. Scrapped ones are never brought back by an AI.",
+ "projects": [
+  {
+   "id": "zero-launcher",
+   "name": "Zero Launcher",
+   "type": "site",
+   "stage": "building",
+   "folders": [
+    "E:\\ZeroLauncher"
+   ],
+   "nextStep": "Part 1-3 overnight build, then test on PC",
+   "waitingOn": "zero",
+   "notes": "",
+   "priority": 1,
+   "repo": "TheZerotje/zero-launcher-channel"
+  },
+  {
+   "id": "zeros-arcade-website",
+   "name": "Zero's Arcade website",
+   "type": "site",
+   "stage": "released",
+   "folders": [
+    "E:\\GameLauncher"
+   ],
+   "nextStep": "Keep running",
+   "waitingOn": "nobody",
+   "notes": "Folder is READ ONLY for the launcher. The launcher never starts or changes the website.",
+   "priority": 1
+  },
+  {
+   "id": "railrove",
+   "name": "Railrove (train base game)",
+   "type": "pc",
+   "stage": "on-hold",
+   "folders": [
+    "E:\\Dustrunner"
+   ],
+   "nextStep": "World building patch",
+   "waitingOn": "nobody",
+   "notes": "On hold until Fri 6 Nov 2026.",
+   "priority": 1
+  },
+  {
+   "id": "marchlands",
+   "name": "Marchlands (warband strategy)",
+   "type": "pc",
+   "stage": "building",
+   "folders": [
+    "E:\\Marchlands"
+   ],
+   "nextStep": "Clash, banners + items, towns",
+   "waitingOn": "ai",
+   "notes": "Codex builds it.",
+   "priority": 1
+  },
+  {
+   "id": "kindlewood",
+   "name": "Kindlewood (colony)",
+   "type": "pc",
+   "stage": "building",
+   "folders": [
+    "E:\\Kindlewood"
+   ],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "Version M3.",
+   "priority": 2
+  },
+  {
+   "id": "tidekeeper",
+   "name": "Tidekeeper (lighthouse)",
+   "type": "pc",
+   "stage": "needs-playtest",
+   "folders": [],
+   "nextStep": "Playtest v0.1.1",
+   "waitingOn": "zero",
+   "notes": "v0.1.1",
+   "priority": 2
+  },
+  {
+   "id": "railfront",
+   "name": "Railfront",
+   "type": "pc",
+   "stage": "needs-playtest",
+   "folders": [
+    "E:\\Railfront"
+   ],
+   "nextStep": "Playtest 0.06 / Alt 0.6",
+   "waitingOn": "zero",
+   "notes": "0.06 / Alt 0.6",
+   "priority": 2
+  },
+  {
+   "id": "the-world-below",
+   "name": "The World Below",
+   "type": "other",
+   "stage": "unknown",
+   "folders": [
+    "F:\\The World Below"
+   ],
+   "nextStep": "Unknown: decide in the first review",
+   "waitingOn": "zero",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "world-engine",
+   "name": "D&D World Engine (world map)",
+   "type": "dnd",
+   "stage": "building",
+   "folders": [
+    "E:\\WorldEngine"
+   ],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "Unreal.",
+   "priority": 1
+  },
+  {
+   "id": "dnd-screens",
+   "name": "D&D DM and player screens / Hero Forge 2",
+   "type": "dnd",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "city-layout-generator",
+   "name": "City layout generator",
+   "type": "dnd",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "dnd-character-maker",
+   "name": "D&D character maker",
+   "type": "dnd",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "kairo",
+   "name": "Kairo (voice AI helper)",
+   "type": "ai",
+   "stage": "on-hold",
+   "folders": [
+    "E:\\AI"
+   ],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 3
+  },
+  {
+   "id": "vtuber-avatar",
+   "name": "VTuber with avatar",
+   "type": "other",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "zero",
+   "notes": "",
+   "priority": 3
+  },
+  {
+   "id": "roblox-shape-army",
+   "name": "Roblox: Shape Army",
+   "type": "roblox",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "Studio test",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "roblox-junk-to-orbit",
+   "name": "Roblox: Junk to Orbit",
+   "type": "roblox",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "roblox-army-battle",
+   "name": "Roblox: army battle game",
+   "type": "roblox",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "roblox-quick-money",
+   "name": "Roblox: quick money game",
+   "type": "roblox",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "peglin-style-roguelike",
+   "name": "Peglin-style roguelike",
+   "type": "web",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "we-march-as-one-style",
+   "name": "We March as One-style game",
+   "type": "web",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "zero",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "base-building-raid",
+   "name": "Base-building raid game",
+   "type": "web",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "idle-clicker",
+   "name": "Idle clicker game",
+   "type": "web",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 2
+  },
+  {
+   "id": "codex-art-queue",
+   "name": "Codex art queue",
+   "type": "other",
+   "stage": "building",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "ai",
+   "notes": "",
+   "priority": 3
+  },
+  {
+   "id": "discord-community",
+   "name": "Discord community",
+   "type": "other",
+   "stage": "released",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "ai",
+   "notes": "ChatGPT runs it.",
+   "priority": 3
+  },
+  {
+   "id": "repo-emberwild",
+   "name": "Emberwild",
+   "type": "other",
+   "stage": "unknown",
+   "folders": [],
+   "nextStep": "Check: keep or scrap? (folder unknown)",
+   "waitingOn": "zero",
+   "notes": "Repo found, folder unknown.",
+   "priority": 2,
+   "repo": "TheZerotje/Emberwild"
+  },
+  {
+   "id": "repo-idle-void-frontier",
+   "name": "Idle-Void-Frontier",
+   "type": "other",
+   "stage": "unknown",
+   "folders": [],
+   "nextStep": "Check: keep or scrap? (folder unknown)",
+   "waitingOn": "zero",
+   "notes": "Repo found, folder unknown.",
+   "priority": 2,
+   "repo": "TheZerotje/Idle-Void-Frontier"
+  },
+  {
+   "id": "repo-sped",
+   "name": "sped",
+   "type": "other",
+   "stage": "unknown",
+   "folders": [],
+   "nextStep": "Check: keep or scrap? (folder unknown)",
+   "waitingOn": "zero",
+   "notes": "Repo found, folder unknown.",
+   "priority": 2,
+   "repo": "TheZerotje/sped"
+  },
+  {
+   "id": "lantern-road",
+   "name": "Lantern Road",
+   "type": "web",
+   "stage": "scrapped",
+   "folders": [],
+   "nextStep": "",
+   "waitingOn": "nobody",
+   "notes": "",
+   "priority": 3,
+   "scrapReason": "Before 2 Nov 2026 (from project notes)"
+  }
+ ]
+}

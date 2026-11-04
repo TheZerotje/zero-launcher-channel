@@ -1,0 +1,1051 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const http = require('http');
+const crypto = require('crypto');
+const { generateKeyPair } = require('../core/signing');
+const { Channel } = require('../core/publisher');
+const { loadChannel, playerView, currentRelease } = require('../core/catalogue');
+const { Installer } = require('../core/installer');
+const { findUpdates } = require('../core/updater');
+const { makeSubmission, FriendInbox } = require('../core/friends');
+const testers = require('../core/testers');
+const versions = require('../core/versions');
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'zlt-'));
+function fakeBuild(dir, label) {
+  fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'TestGame.exe'), 'fake exe ' + label);
+  fs.writeFileSync(path.join(dir, 'data', 'game.pck'), Buffer.alloc(200000, label));
+  return dir;
+}
+function serve(dir) {
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      const f = path.join(dir, decodeURIComponent(req.url.split('?')[0]));
+      if (!f.startsWith(dir) || !fs.existsSync(f)) { res.statusCode = 404; return res.end(); }
+      const data = fs.readFileSync(f);
+      const m = /bytes=(\d+)-/.exec(req.headers.range || '');
+      if (m) { res.statusCode = 206; return res.end(data.subarray(Number(m[1]))); }
+      res.setHeader('content-length', data.length);
+      res.end(data);
+    }).listen(0, '127.0.0.1', () => resolve(srv));
+  });
+}
+
+test('versions compare', () => {
+  assert.equal(versions.compare('0.19.12.0', '0.19.9'), 1);
+  assert.equal(versions.compare('1.0', '1.0.0'), 0);
+  assert.equal(versions.compare('1.0-beta', '1.0'), -1);
+  assert.ok(!versions.isValid('abc'));
+});
+
+test('full flow: publish, roles, install over http, update, go back, uninstall', async () => {
+  const keys = generateKeyPair();
+  const chDir = tmp();
+  const ch = new Channel(chDir, keys.privateKey);
+  ch.upsertGame({ id: 'test-game', name: 'Test Game', kind: 'pc' });
+  ch.upsertGame({ id: 'pop-storm', name: 'Pop Storm', kind: 'web', url: 'https://example.com/games/pop-storm/' });
+  await ch.addPcRelease({ gameId: 'test-game', buildDir: fakeBuild(tmp(), 'a'), version: '1.0.0', notes: 'first' });
+
+  const srv = await serve(chDir);
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    let cat = await loadChannel(base, keys.publicKey);
+    // unreleased: only developer sees it
+    assert.equal(playerView(cat, 'user').games.find((g) => g.id === 'test-game'), undefined);
+    assert.equal(playerView(cat, { role: 'user', testerGames: ['test-game'] }).games.find((g) => g.id === 'test-game'), undefined);
+    assert.ok(playerView(cat, 'developer').games.find((g) => g.id === 'test-game'));
+    assert.ok(playerView(cat, 'user').games.find((g) => g.id === 'pop-storm'), 'web games always visible');
+
+    ch.toTesters('test-game', '1.0.0');
+    cat = await loadChannel(base, keys.publicKey);
+    assert.ok(playerView(cat, { role: 'user', testerGames: ['test-game'] }).games.find((g) => g.id === 'test-game'));
+    assert.equal(playerView(cat, 'user').games.find((g) => g.id === 'test-game'), undefined);
+
+    ch.release('test-game', '1.0.0');
+    cat = await loadChannel(base, keys.publicKey);
+    const game = cat.games.find((g) => g.id === 'test-game');
+    const inst = new Installer(tmp());
+    const stages = [];
+    await inst.install(base, game, currentRelease(game), { onProgress: (p) => stages.push(p.stage) });
+    assert.deepEqual([...new Set(stages)], ['download', 'check', 'unpack', 'done']);
+    const info = inst.installed()['test-game'];
+    assert.equal(info.version, '1.0.0');
+    assert.ok(fs.existsSync(path.join(info.dir, 'TestGame.exe')));
+    assert.equal(findUpdates(cat, inst.installed()).length, 0);
+
+    // v1.1 to testers: user gets no update, tester does
+    await ch.addPcRelease({ gameId: 'test-game', buildDir: fakeBuild(tmp(), 'b'), version: '1.1.0' });
+    ch.toTesters('test-game', '1.1.0');
+    cat = await loadChannel(base, keys.publicKey);
+    assert.equal(findUpdates(cat, inst.installed(), { role: 'user' }).length, 0);
+    assert.equal(findUpdates(cat, inst.installed(), { role: 'user', testerGames: ['test-game'] }).length, 1);
+
+    ch.release('test-game', '1.1.0');
+    cat = await loadChannel(base, keys.publicKey);
+    const ups = findUpdates(cat, inst.installed());
+    assert.equal(ups.length, 1);
+    await inst.install(base, ups[0].game, ups[0].release);
+    assert.equal(inst.installed()['test-game'].version, '1.1.0');
+    assert.ok(!fs.existsSync(info.dir), 'old version removed after update');
+
+    // go back
+    ch.goBack('test-game');
+    cat = await loadChannel(base, keys.publicKey);
+    const back = findUpdates(cat, inst.installed());
+    assert.equal(back[0].release.version, '1.0.0');
+
+    inst.uninstall('test-game');
+    assert.equal(inst.installed()['test-game'], undefined);
+    assert.ok(!fs.existsSync(path.join(inst.gamesDir, 'test-game')));
+  } finally { srv.close(); }
+});
+
+test('changed catalogue or wrong key is refused', async () => {
+  const keys = generateKeyPair();
+  const other = generateKeyPair();
+  const dir = tmp();
+  const ch = new Channel(dir, keys.privateKey);
+  ch.upsertGame({ id: 'abc', name: 'A', kind: 'web', url: 'https://x.y/' });
+  await assert.rejects(loadChannel(dir, other.publicKey), { code: 'BAD_SIGNATURE' });
+  const f = path.join(dir, 'catalogue.json');
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('"A"', '"Evil"'));
+  await assert.rejects(loadChannel(dir, keys.publicKey), { code: 'BAD_SIGNATURE' });
+});
+
+test('broken download is refused and nothing is installed', async () => {
+  const keys = generateKeyPair();
+  const dir = tmp();
+  const ch = new Channel(dir, keys.privateKey);
+  ch.upsertGame({ id: 'tg', name: 'T', kind: 'pc' });
+  const r = await ch.addPcRelease({ gameId: 'tg', buildDir: fakeBuild(tmp(), 'a'), version: '1.0' });
+  ch.release('tg', '1.0');
+  const zip = path.join(dir, r.file.url);
+  const b = fs.readFileSync(zip); b[b.length - 30] ^= 0xff; fs.writeFileSync(zip, b);
+  const cat = await loadChannel(dir, keys.publicKey);
+  const inst = new Installer(tmp());
+  await assert.rejects(inst.install(dir, cat.games[0], currentRelease(cat.games[0])), { code: 'BAD_CHECKSUM' });
+  assert.deepEqual(inst.installed(), {});
+  assert.deepEqual(fs.readdirSync(inst.dlDir), []);
+});
+
+test('zip with ../ path is refused', async () => {
+  const yazl = require('yazl');
+  const { unpack } = require('../core/zip');
+  const z = new yazl.ZipFile();
+  const zp = path.join(tmp(), 'evil.zip');
+  z.addBuffer(Buffer.from('x'), 'ok.txt');
+  z.addBuffer(Buffer.from('x'), 'a/xx/xx/evil.txt');
+  await new Promise((r) => { z.outputStream.pipe(fs.createWriteStream(zp)).on('close', r); z.end(); });
+  const raw = fs.readFileSync(zp).toString('latin1').split('a/xx/xx/evil.txt').join('a/../../evil.txt');
+  fs.writeFileSync(zp, Buffer.from(raw, 'latin1'));
+  const out = tmp();
+  await assert.rejects(unpack(zp, path.join(out, 'in')), /Unsafe|invalid relative path/);
+  assert.ok(!fs.existsSync(path.join(out, 'evil.txt')));
+});
+
+test('friend: submit, wrong key refused, other game refused, approve adds as unreleased, block', async () => {
+  const zero = generateKeyPair();
+  const friend = generateKeyPair();
+  const faker = generateKeyPair();
+  const ch = new Channel(tmp(), zero.privateKey);
+  const inbox = new FriendInbox(tmp());
+  inbox.addFriend({ friendId: 'sam', name: 'Sam', publicKeyPem: friend.publicKey, games: ['sams-game'] });
+  const out = tmp();
+  const build = fakeBuild(tmp(), 's');
+
+  const good = await makeSubmission({ friendId: 'sam', privateKeyPem: friend.privateKey, gameId: 'sams-game', gameName: "Sam's Game", version: '0.1', buildDir: build, outDir: out });
+  const fake = await makeSubmission({ friendId: 'sam', privateKeyPem: faker.privateKey, gameId: 'sams-game', version: '0.2', buildDir: build, outDir: tmp() });
+  const notHis = await makeSubmission({ friendId: 'sam', privateKeyPem: friend.privateKey, gameId: 'railrove', version: '9.0', buildDir: build, outDir: tmp() });
+
+  await assert.rejects(inbox.importSubmission(fake), /Signature is wrong/);
+  await assert.rejects(inbox.importSubmission(notHis), /may not publish/);
+  const sub = await inbox.importSubmission(good);
+  assert.equal(inbox.waiting().length, 1);
+  assert.equal(ch.read().games.length, 0, 'nothing in catalogue before approve');
+  const rel = await inbox.approve(sub.id, ch);
+  assert.equal(rel.state, 'unreleased');
+  assert.equal(ch.read().games[0].owner, 'sam');
+  assert.equal(inbox.waiting().length, 0);
+
+  inbox.setBlocked('sam', true);
+  await assert.rejects(inbox.importSubmission(good), /blocked/);
+  // hack: a file that says it is from "__proto__" or "constructor" is an unknown friend
+  for (const id of ['__proto__', 'constructor', 'toString']) {
+    const trick = await makeSubmission({ friendId: id, privateKeyPem: faker.privateKey, gameId: 'sams-game', version: '0.3', buildDir: build, outDir: tmp() }).catch(() => null);
+    if (trick) await assert.rejects(inbox.importSubmission(trick), /Unknown friend/);
+  }
+});
+
+test('accounts + tester rights per game', async () => {
+  const keys = generateKeyPair();
+  const ch = new Channel(tmp(), keys.privateKey);
+  ch.upsertGame({ id: 'railrove', name: 'Railrove', kind: 'pc' });
+  ch.upsertGame({ id: 'marchlands', name: 'Marchlands', kind: 'pc' });
+  for (const id of ['railrove', 'marchlands']) {
+    await ch.addPcRelease({ gameId: id, buildDir: fakeBuild(tmp(), id[0]), version: '0.1' });
+    ch.toTesters(id, '0.1');
+  }
+  const sam = testers.makeAccount('Sam');
+  assert.match(sam.id, /^SAM-[0-9A-F]{4}-[0-9A-F]{4}$/);
+  assert.throws(() => ch.setTester({ accountId: 'nonsense', games: [] }), /looks wrong/);
+  ch.setTester({ accountId: sam.id.toLowerCase(), name: 'Sam', games: ['railrove'] });
+  const cat = ch.read();
+  const g = testers.testerGames(cat, sam);
+  assert.deepEqual(g, ['railrove']);
+  const view = playerView(cat, { role: 'user', testerGames: g });
+  assert.deepEqual(view.games.map((x) => x.id), ['railrove']);
+  assert.equal(view.testers, undefined, 'tester list hidden from players');
+  const stranger = testers.makeAccount('Sam');
+  assert.deepEqual(testers.testerGames(cat, stranger), [], 'same name, other key = no rights');
+  ch.removeTester(sam.id);
+  assert.deepEqual(testers.testerGames(ch.read(), sam), []);
+});
+
+test('AI helper: parse the box', () => {
+  const { parse, commandFor, pretty } = require('../core/aihelper');
+  assert.deepEqual(parse('claude, add night mode'), { tool: 'claude', said: 'claude', task: 'add night mode' });
+  assert.equal(parse('ChatGPT do Y').tool, 'codex');
+  assert.equal(parse('codex: make icons').task, 'make icons');
+  assert.equal(parse('hello'), null);
+  assert.ok(commandFor('codex', 'x', '/tmp').args.includes('workspace-write'));
+  assert.equal(pretty('claude', JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } })), 'hi');
+});
+
+test('GitHub sync against a fake GitHub', async () => {
+  const { GitHubChannel } = require('../core/github');
+  const keys = generateKeyPair();
+  const dir = tmp();
+  const ch = new Channel(dir, keys.privateKey);
+  ch.upsertGame({ id: 'tg', name: 'T', kind: 'pc' });
+  await ch.addPcRelease({ gameId: 'tg', buildDir: fakeBuild(tmp(), 'a'), version: '1.0' });
+  const assets = []; let nextId = 1; let rel = null;
+  const srv = await new Promise((resolve) => {
+    const s = http.createServer(async (req, res) => {
+      const chunks = []; for await (const c of req) chunks.push(c);
+      const body = Buffer.concat(chunks);
+      assert.equal(req.headers.authorization, 'Bearer t0k');
+      const u = new URL(req.url, 'http://x');
+      res.setHeader('content-type', 'application/json');
+      if (req.method === 'GET' && u.pathname.endsWith('/releases/tags/channel')) { if (!rel) { res.statusCode = 404; return res.end('{}'); } return res.end(JSON.stringify(rel)); }
+      if (req.method === 'POST' && u.pathname.endsWith('/releases')) { rel = { id: 7 }; return res.end(JSON.stringify(rel)); }
+      if (req.method === 'GET' && u.pathname.endsWith('/assets')) return res.end(JSON.stringify(u.searchParams.get('page') === '1' ? assets : []));
+      if (req.method === 'POST' && u.pathname.endsWith('/assets')) { const a = { id: nextId++, name: u.searchParams.get('name'), size: body.length }; assets.push(a); return res.end(JSON.stringify(a)); }
+      if (req.method === 'DELETE') { const id = Number(u.pathname.split('/').pop()); assets.splice(assets.findIndex((a) => a.id === id), 1); res.statusCode = 204; return res.end(); }
+      res.statusCode = 500; res.end('{}');
+    }).listen(0, '127.0.0.1', () => resolve(s));
+  });
+  try {
+    const base = `http://127.0.0.1:${srv.address().port}`;
+    const gh = new GitHubChannel({ repo: 'me/chan', token: 't0k', api: base, uploads: base });
+    const steps = [];
+    let r = await gh.sync(dir, (text, p) => steps.push({ text, ...p }));
+    assert.equal(r.uploaded, 1);
+    assert.deepEqual(steps.map((x) => x.done), [0, 1, 2, 3], 'upload progress counts up');
+    assert.ok(steps.every((x) => x.total === 3));
+    assert.deepEqual(assets.map((a) => a.name).sort(), ['catalogue.json', 'catalogue.json.sig', 'tg-1.0.zip']);
+    r = await gh.sync(dir);
+    assert.equal(r.uploaded, 0, 'zip not uploaded twice');
+    assert.equal(assets.length, 3);
+    // a launcher setup in the channel is uploaded too (once)
+    const exe = path.join(tmp(), 'ZeroLauncherSetup-0.2.0.exe'); fs.writeFileSync(exe, 'MZ fake setup');
+    await ch.setLauncher(exe);
+    assert.equal((await gh.sync(dir)).uploaded, 1);
+    assert.ok(assets.some((a) => a.name === 'ZeroLauncherSetup-0.2.0.exe'));
+    assert.equal((await gh.sync(dir)).uploaded, 0);
+  } finally { srv.close(); }
+});
+
+test('My games hub: pc beats notes, you beat pc, released folds, needs-work comes back', () => {
+  const { build } = require('../core/gamehub');
+  const site = tmp();
+  fs.mkdirSync(path.join(site, 'games', 'pop-storm'), { recursive: true });
+  fs.writeFileSync(path.join(site, 'games', 'pop-storm', 'game.json'), JSON.stringify({ name: 'Pop Storm', category: 'Puzzle' }));
+  fs.mkdirSync(path.join(site, 'games', 'new-one'), { recursive: true });
+  fs.writeFileSync(path.join(site, 'games', 'new-one', 'game.json'), JSON.stringify({ name: 'New One' }));
+  fs.mkdirSync(path.join(site, 'data'));
+  fs.writeFileSync(path.join(site, 'data', 'releases.json'), JSON.stringify({ 'pop-storm': { state: 'released' }, 'new-one': 'unreleased', 'cat-nap': 'coming-soon' }));
+  const godot = tmp();
+  fs.writeFileSync(path.join(godot, 'project.godot'), 'config/name="Railrove"\nconfig/version="0.19.12.0"\nconfig/features=PackedStringArray("4.7", "Forward Plus")\n');
+  fs.mkdirSync(path.join(godot, 'build', 'win'), { recursive: true });
+  fs.writeFileSync(path.join(godot, 'build', 'win', 'Railrove.exe'), 'x');
+  const seed = { games: [{ id: 'cat-nap', name: 'Cat Nap', kind: 'web', status: 'ready' }, { id: 'railrove', name: 'Railrove', kind: 'godot', status: 'on-hold', version: '0.1' }, { id: 'cryptogram', name: 'Cryptogram', kind: 'web', status: 'scrapped' }] };
+  let r = build({ seed, siteDir: site, projects: [{ id: 'railrove', name: 'Railrove', path: godot }, { id: 'ghost', name: 'Ghost', path: '/nope' }] });
+  const by = Object.fromEntries(r.games.map((g) => [g.id, g]));
+  assert.equal(by['pop-storm'].status, 'released');
+  assert.equal(by['cat-nap'].status, 'coming-soon', 'website file beats notes');
+  assert.equal(by['new-one'].status, 'testing');
+  assert.equal(by.railrove.version, '0.19.12.0', 'project file beats notes');
+  assert.equal(by.railrove.kind, 'godot');
+  assert.equal(by.railrove.status, 'on-hold');
+  assert.match(by.railrove.lastBuild.exe, /Railrove\.exe$/);
+  assert.ok(by.ghost.warnings.includes('Folder not found on this PC'));
+  assert.equal(r.games[r.games.length - 1].id, 'cryptogram', 'scrapped last');
+  r = build({ seed, siteDir: site, marks: { 'pop-storm': { needsWork: 'menu bug' }, railrove: { status: 'building', nextStep: 'world building' } } });
+  assert.equal(r.games[0].id, 'pop-storm', 'needs work goes to the top');
+  const rr = r.games.find((g) => g.id === 'railrove');
+  assert.equal(rr.status, 'building'); assert.equal(rr.statusSource, 'you'); assert.equal(rr.nextStep, 'world building');
+});
+
+test('weekly plan: Friday 12:00 weeks, suggestions from games', () => {
+  const w = require('../core/weekly');
+  assert.equal(w.key(w.weekStart(new Date(2026, 10, 2, 10))), '2026-10-30'); // Mon -> Fri 30 Oct
+  assert.equal(w.key(w.weekStart(new Date(2026, 10, 6, 11, 59))), '2026-10-30'); // Fri before noon
+  assert.equal(w.key(w.weekStart(new Date(2026, 10, 6, 12, 0))), '2026-11-06'); // Fri noon = new week
+  const hub = { games: [
+    { id: 'cat-nap', name: 'Cat Nap', status: 'ready' },
+    { id: 'railrove', name: 'Railrove', status: 'on-hold', nextStep: 'world building' },
+    { id: 'world-engine', name: 'D&D World Engine', status: 'building', nextStep: 'map maker' },
+    { id: 'pop-storm', name: 'Pop Storm', status: 'needs-work', facts: { needsWork: { value: 'menu bug' } } },
+    { id: 'skyhold', name: 'Skyhold', status: 'testing' },
+  ] };
+  const s = w.suggest(hub);
+  assert.deepEqual(s.goals.map((g) => g.text), ['Fix released game: Pop Storm', 'Get 1 web game out: Cat Nap', 'Railrove: world building', 'D&D World Engine: map maker']);
+  assert.ok(s.todos.some((t) => t.text === 'Fix Pop Storm (menu bug)'));
+  assert.ok(s.todos.some((t) => t.text === 'Playtest Skyhold (10 min)'));
+  const store = {};
+  const c1 = w.current(store, hub, undefined, new Date(2026, 10, 2));
+  c1.week.goals[0].done = true;
+  const c2 = w.current(store, hub, undefined, new Date(2026, 10, 7));
+  assert.equal(c2.key, '2026-11-06');
+  assert.equal(c2.history[0].done, 1);
+});
+
+test('developer sees pulled versions in the list, but never gets them as current', () => {
+  const { playerView: pv, currentRelease: cr } = require('../core/catalogue');
+  const cat = { format: 1, games: [{ id: 'gamex', kind: 'pc', releases: [
+    { version: '1.0', state: 'released' }, { version: '1.1', state: 'pulled' }] }] };
+  const dev = pv(cat, { role: 'developer' });
+  assert.deepEqual(dev.games[0].releases.map((r) => r.version), ['1.0', '1.1']);
+  assert.equal(cr(cat.games[0], { role: 'developer' }).version, '1.0');
+  const user = pv(cat, { role: 'user' });
+  assert.deepEqual(user.games[0].releases.map((r) => r.version), ['1.0']);
+});
+
+test('download queue: one at a time, waiting, pause/resume, cancel', async () => {
+  const { DownloadQueue } = require('../core/queue');
+  const order = [];
+  const gates = {};
+  const run = (id, job) => new Promise((resolve, reject) => {
+    order.push(id);
+    gates[id] = { resolve, job };
+    const tick = setInterval(() => { if (job.signal.cancelled) { clearInterval(tick); const e = new Error('Paused'); e.code = 'PAUSED'; reject(e); } }, 5);
+    gates[id].done = () => { clearInterval(tick); resolve(); };
+  });
+  const q = new DownloadQueue(run);
+  q.add('a'); q.add('b'); q.add('c');
+  assert.equal(q.get('a').stage, 'download');
+  assert.equal(q.get('b').stage, 'waiting');
+  assert.equal(q.add('b'), false, 'no double add');
+  // pause the running one: next one starts
+  q.pause('a');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(q.get('a').stage, 'paused');
+  assert.equal(q.get('b').stage, 'download');
+  // cancel a waiting one
+  let removed = null;
+  q.cancel('c', (id) => { removed = id; });
+  assert.equal(removed, 'c');
+  assert.equal(q.get('c'), null);
+  // resume a: it waits behind b
+  q.resume('a');
+  assert.equal(q.get('a').stage, 'waiting');
+  gates.b.done();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(q.get('b'), null);
+  assert.equal(q.get('a').stage, 'download');
+  // cancel the running one
+  let gone = null;
+  q.cancel('a', (id) => { gone = id; });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(gone, 'a');
+  assert.equal(q.list().length, 0);
+  assert.deepEqual(order, ['a', 'b', 'a']);
+});
+
+test('not enough disk space: clear message, nothing downloaded', async () => {
+  const dir = tmp();
+  const inst = new Installer(path.join(dir, 'lib'));
+  inst.freeBytes = () => 10 * 1048576; // 10 MB free
+  const game = { id: 'bigone', kind: 'pc' };
+  const release = { version: '1.0', exe: 'a.exe', file: { url: 'x.zip', size: 500 * 1048576, sha256: 'a'.repeat(64) } };
+  await assert.rejects(inst.install(dir, game, release), (e) => e.code === 'NO_SPACE' && /needs about \d+ MB/.test(e.message) && /10 MB free/.test(e.message));
+  assert.equal(fs.readdirSync(path.join(dir, 'lib', 'downloads')).length, 0);
+  assert.ok(Installer.spaceNeeded(100) > 100);
+});
+
+test('strings: every screen text has a Dutch version', () => {
+  const strings = require('../app/renderer/strings');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'renderer', 'app.js'), 'utf8');
+  const re = /\bt\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
+  const missing = [];
+  let m;
+  while ((m = re.exec(src))) { const k = m[2].replace(/\\'/g, "'").replace(/\\"/g, '"'); if (!(k in strings.NL)) missing.push(k); }
+  const help = src.slice(src.indexOf('const HELP'), src.indexOf('P.help'));
+  const re2 = /'((?:\\.|[^'])*)'/g;
+  while ((m = re2.exec(help))) if (!(m[1] in strings.NL)) missing.push(m[1]);
+  const main = fs.readFileSync(path.join(__dirname, '..', 'app', 'main.js'), 'utf8');
+  const re3 = /\btr\(\s*'((?:\\.|[^'])*)'/g;
+  while ((m = re3.exec(main))) if (!(m[1] in strings.NL)) missing.push(m[1]);
+  assert.deepEqual(missing, []);
+  assert.equal(strings.t('nl', 'Play'), 'Spelen');
+  assert.equal(strings.t('en', 'Play'), 'Play');
+  assert.equal(strings.t('nl', 'Downloading {pct}%', { pct: 40 }), 'Downloaden 40%');
+  assert.equal(strings.t('nl', 'some unknown text'), 'some unknown text');
+});
+
+const notWindows = process.platform === 'win32' ? 'the fake Godot is a shell script' : false;
+test('Godot export: copies the project, exports headless to temp, never changes the project', { skip: notWindows }, async () => {
+  const godot = require('../core/godot');
+  const dir = tmp();
+  const proj = path.join(dir, 'MyGame');
+  fs.mkdirSync(path.join(proj, '.godot'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'project.godot'), 'config/name="My Game"\nconfig/version="1.2.0"\n');
+  const fake = path.join(dir, 'godot.sh');
+  // fake Godot: writes the exe, and ALSO writes a cache file in the folder it runs in (like real Godot)
+  fs.writeFileSync(fake, '#!/bin/sh\nfor a; do out="$a"; done\necho "$@" > args.txt\necho cache > .godot/new-cache\nprintf x > "$out"\n', { mode: 0o755 });
+  const before = JSON.stringify(fs.readdirSync(proj, { recursive: true }).sort());
+  // no preset: clear message
+  await assert.rejects(godot.exportWindows({ godotPath: fake, projectDir: proj }), /no "Windows Desktop" export preset/);
+  fs.writeFileSync(path.join(proj, 'export_presets.cfg'), '[preset.0]\nname="Windows Desktop"\n');
+  const lines = [];
+  const out = await godot.exportWindows({ godotPath: fake, projectDir: proj, gameName: 'My Game', onLine: (l) => lines.push(l) });
+  assert.ok(fs.existsSync(path.join(out.buildDir, 'My Game.exe')));
+  assert.ok(!godot.isInside(out.buildDir, proj), 'export is outside the project');
+  const after = JSON.stringify(fs.readdirSync(proj, { recursive: true }).sort());
+  assert.equal(after, JSON.stringify(JSON.parse(before).concat(['export_presets.cfg']).sort()), 'project folder not changed by the export');
+  assert.ok(!fs.existsSync(path.join(proj, '.godot', 'new-cache')));
+  assert.equal(godot.projectInfo(proj).version, '1.2.0');
+  // missing godot / bad project
+  await assert.rejects(godot.exportWindows({ godotPath: path.join(dir, 'nope'), projectDir: proj }), /Godot not found/);
+  await assert.rejects(godot.exportWindows({ godotPath: fake, projectDir: dir }), /No Godot project/);
+  // a failing Godot gives a clear error
+  fs.writeFileSync(fake, '#!/bin/sh\necho "ERROR: boom"\nexit 3\n', { mode: 0o755 });
+  await assert.rejects(godot.exportWindows({ godotPath: fake, projectDir: proj }), /export failed \(code 3\)[\s\S]*boom/);
+});
+
+test('git info is read only: last 5 commits + changes not committed', () => {
+  const { gitInfo } = require('../core/gamehub');
+  const { execFileSync } = require('child_process');
+  const dir = tmp();
+  const g = (...a) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { stdio: 'ignore' });
+  g('init', '-q');
+  for (let i = 1; i <= 7; i++) { fs.writeFileSync(path.join(dir, 'f.txt'), String(i)); g('add', '.'); g('commit', '-q', '-m', 'change ' + i); }
+  const idx = path.join(dir, '.git', 'index');
+  const mtime = fs.statSync(idx).mtimeMs;
+  let info = gitInfo(dir);
+  assert.equal(info.commits.length, 5);
+  assert.equal(info.commits[0].message, 'change 7');
+  assert.equal(info.dirty, false);
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'edited');
+  info = gitInfo(dir);
+  assert.equal(info.dirty, true);
+  assert.equal(fs.statSync(idx).mtimeMs, mtime, 'git index not touched');
+  assert.equal(gitInfo(tmp()), null, 'not a git folder');
+});
+
+test('Friday 12:00 week message: once per week, not on the very first run', () => {
+  const weekly = require('../core/weekly');
+  const thu = new Date(2026, 10, 5, 18, 0); // Thu 5 Nov 2026
+  const first = weekly.noticeDue(undefined, thu);
+  assert.equal(first.show, false);
+  assert.equal(weekly.noticeDue(first.key, thu), null);
+  const fri = new Date(2026, 10, 6, 12, 1);
+  const due = weekly.noticeDue(first.key, fri);
+  assert.equal(due.show, true);
+  assert.notEqual(due.key, first.key);
+  assert.equal(weekly.noticeDue(due.key, new Date(2026, 10, 7, 9)), null);
+  assert.equal(weekly.noticeDue(first.key, new Date(2026, 10, 6, 11, 59)), null, 'not before 12:00');
+});
+
+test('AI helper: past jobs list, status and log', () => {
+  const { AiHelper } = require('../core/aihelper');
+  const root = tmp();
+  const mk = (id, job, end, out) => {
+    fs.mkdirSync(path.join(root, id));
+    fs.writeFileSync(path.join(root, id, 'job.json'), JSON.stringify(job));
+    if (end) fs.writeFileSync(path.join(root, id, 'end.json'), JSON.stringify(end));
+    fs.writeFileSync(path.join(root, id, 'output.jsonl'), out || '');
+  };
+  mk('1762000000000-1', { tool: 'claude', said: 'claude', task: 'fix jump', cwd: root, startedAt: '2026-11-01T10:00:00Z' }, { code: 0 },
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'I fixed the jump.' }] } }) + '\n');
+  mk('1762000001000-2', { tool: 'codex', said: 'codex', task: 'add menu', cwd: root }, { code: 1 });
+  mk('1762000002000-3', { tool: 'claude', task: 'stopped one', cwd: root }, null);
+  fs.mkdirSync(path.join(root, 'not-a-job'));
+  const ai = new AiHelper(root);
+  const h = ai.history();
+  assert.deepEqual(h.map((j) => j.status), ['stopped', 'failed', 'done']);
+  assert.match(ai.readLog('1762000000000-1'), /I fixed the jump/);
+  assert.throws(() => ai.logFile('../../etc'), /Bad job id/);
+  assert.throws(() => ai.logFile('1762000009999-9'), /No log/);
+});
+
+test('every IPC call has an input check, and checks refuse bad input', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'main.js'), 'utf8');
+  const apiBlock = src.slice(src.indexOf('const api = {'), src.indexOf('// ---------------- IPC input checks'));
+  const names = [...apiBlock.matchAll(/^ {2}([a-zA-Z]+): /gm)].map((m) => m[1]);
+  const checkBlock = src.slice(src.indexOf('const CHECKS = {'), src.indexOf('for (const [name, fn] of Object.entries(api))'));
+  const missing = names.filter((n) => !new RegExp(`\\b${n}:`).test(checkBlock));
+  assert.ok(names.length > 40, 'found the api list');
+  assert.deepEqual(missing, []);
+  assert.match(src, /if \(!CHECKS\[name\]\) throw new Error\('Not allowed'\)/, 'calls without a check are refused');
+  const { V } = require('../core/validate');
+  assert.throws(() => V.gameId('../etc'), /Bad input/);
+  assert.throws(() => V.gameId(5), /Bad input/);
+  assert.throws(() => V.version('1.0; rm -rf'), /Bad input/);
+  assert.throws(() => V.str('x'.repeat(301)), /Bad input/);
+  assert.throws(() => V.url('javascript:alert(1)'), /Bad input/);
+  assert.throws(() => V.url('http://x', 'pic', { httpsOnly: true }), /Bad input/);
+  assert.throws(() => V.dir('relative/path'), /Bad input/);
+  assert.throws(() => V.dir(path.join(tmp(), 'nope')), /not found/);
+  assert.throws(() => V.file(__filename, 'f', '.zlsub'), /Bad input/);
+  assert.equal(V.gameId('railrove'), 'railrove');
+  assert.equal(V.version(' 0.20.0 '), '0.20.0');
+  assert.equal(V.url(''), '');
+});
+
+test('atomic JSON writes leave no temp files and replace the old file', () => {
+  const { writeJsonAtomic, readJson } = require('../core/fsutil');
+  const dir = tmp();
+  const f = path.join(dir, 'a', 'x.json');
+  writeJsonAtomic(f, { a: 1 });
+  writeJsonAtomic(f, { a: 2 });
+  assert.deepEqual(readJson(f), { a: 2 });
+  assert.deepEqual(fs.readdirSync(path.dirname(f)), ['x.json']);
+  // no direct writeFileSync of JSON files left in main.js / core (except temp work folders)
+  const main = fs.readFileSync(path.join(__dirname, '..', 'app', 'main.js'), 'utf8');
+  assert.doesNotMatch(main, /fs\.writeFileSync\(/);
+});
+
+test('friends: a bad public key or bad game id is refused', () => {
+  const inbox = new FriendInbox(tmp());
+  assert.throws(() => inbox.addFriend({ friendId: 'sam', name: 'Sam', publicKeyPem: 'hello', games: ['x-game'] }), /public key looks wrong/);
+  const k = generateKeyPair();
+  assert.throws(() => inbox.addFriend({ friendId: 'sam', name: 'Sam', publicKeyPem: k.publicKey, games: ['../x'] }), /Game id/);
+  assert.ok(inbox.addFriend({ friendId: 'sam', name: 'Sam', publicKeyPem: k.publicKey, games: ['x-game'] }));
+});
+
+test('safe start: typed text never becomes a command', async () => {
+  const { escapeWinArg, spawnSafe } = require('../core/proc');
+  assert.equal(escapeWinArg('a b', false), '^"a^ b^"');
+  assert.match(escapeWinArg('x & del *', true), /\^\^&/);
+  // Real run: a tool that prints its arguments. On Windows it is a .cmd file (needs cmd.exe).
+  const dir = tmp();
+  const printer = path.join(dir, 'printargs.js');
+  fs.writeFileSync(printer, 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
+  let cmd;
+  if (process.platform === 'win32') {
+    cmd = path.join(dir, 'tool.cmd');
+    fs.writeFileSync(cmd, `@"${process.execPath}" "${printer}" %*\r\n`);
+  } else {
+    cmd = path.join(dir, 'tool.sh');
+    fs.writeFileSync(cmd, `#!/bin/sh\nexec "${process.execPath}" "${printer}" "$@"\n`, { mode: 0o755 });
+  }
+  const nasty = ['fix the jump & echo HACKED > hacked.txt', 'say "hi" | more', '100% (done) ^ <ok>', 'C:\\path\\', 'a;b,c'];
+  const out = await new Promise((resolve, reject) => {
+    const c = spawnSafe(cmd, nasty, { cwd: dir });
+    let o = ''; c.stdout.on('data', (d) => { o += d; }); c.on('error', reject); c.on('close', () => resolve(o));
+  });
+  assert.deepEqual(JSON.parse(out), nasty);
+  assert.ok(!fs.existsSync(path.join(dir, 'hacked.txt')), 'no command ran');
+});
+
+test('offline: last good list is kept and used; a bad list is never cached', async () => {
+  const { loadChannelCached, retryDelay } = require('../core/catalogue');
+  const keys = generateKeyPair();
+  const chDir = tmp(), cache = tmp();
+  const ch = new Channel(chDir, keys.privateKey);
+  ch.upsertGame({ id: 'webby', name: 'Webby', kind: 'web', url: 'https://x.test/' });
+  let r = await loadChannelCached(chDir, keys.publicKey, cache);
+  assert.equal(r.offline, false); assert.equal(r.error, null); assert.equal(r.cat.games.length, 1);
+  assert.ok(fs.existsSync(path.join(cache, 'catalogue.json')));
+  // channel gone (offline)
+  r = await loadChannelCached(path.join(chDir, 'gone'), keys.publicKey, cache);
+  assert.equal(r.offline, true); assert.ok(r.error); assert.equal(r.cat.games[0].id, 'webby');
+  // channel sends a changed list: refused, last good list used, cache NOT replaced
+  const f = path.join(chDir, 'catalogue.json');
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('Webby', 'Evil'));
+  r = await loadChannelCached(chDir, keys.publicKey, cache);
+  assert.equal(r.error.code, 'BAD_SIGNATURE'); assert.equal(r.cat.games[0].name, 'Webby');
+  assert.match(fs.readFileSync(path.join(cache, 'catalogue.json'), 'utf8'), /Webby/);
+  // changed cache file: not used either
+  const cf = path.join(cache, 'catalogue.json');
+  fs.writeFileSync(cf, fs.readFileSync(cf, 'utf8').replace('Webby', 'Evil'));
+  r = await loadChannelCached(path.join(chDir, 'gone'), keys.publicKey, cache);
+  assert.equal(r.cat, null); assert.equal(r.offline, false);
+  assert.deepEqual([1, 2, 3, 9].map(retryDelay), [60000, 300000, 1800000, 1800000]);
+});
+
+test('news: signed with the list, bad news refused', () => {
+  const keys = generateKeyPair();
+  const ch = new Channel(tmp(), keys.privateKey);
+  const a = ch.addNews({ title: 'Hello', text: 'First news' });
+  ch.addNews({ title: 'Second', text: 'More', image: 'https://x.test/p.png' });
+  let cat = ch.read();
+  assert.deepEqual(cat.news.map((n) => n.title), ['Second', 'Hello']);
+  assert.throws(() => ch.addNews({ title: '', text: 'x' }), /bad title/);
+  assert.throws(() => ch.addNews({ title: 'X', image: 'http://insecure.test/p.png' }), /https/);
+  assert.throws(() => ch.addNews({ title: 'X', image: 'javascript:alert(1)' }), /https/);
+  assert.throws(() => ch.addNews({ title: 'X', text: 'y'.repeat(601) }), /too long/);
+  ch.removeNews(a.id);
+  cat = ch.read();
+  assert.deepEqual(cat.news.map((n) => n.title), ['Second']);
+  // players see news through the signed list only
+  const { verifyAndParse } = require('../core/catalogue');
+  const bytes = fs.readFileSync(ch.file);
+  assert.equal(verifyAndParse(bytes, fs.readFileSync(ch.file + '.sig', 'utf8'), keys.publicKey).news.length, 1);
+});
+
+test('game pages: screenshots, trailer, coming soon, launch options, shortcut plan', async () => {
+  const { splitArgs } = require('../core/installer');
+  assert.deepEqual(splitArgs('--fullscreen --level 2'), ['--fullscreen', '--level', '2']);
+  assert.deepEqual(splitArgs('--name "Big Map" \'x y\' ""'), ['--name', 'Big Map', 'x y', '']);
+  assert.deepEqual(splitArgs('a & del *'), ['a', '&', 'del', '*'], 'no shell meaning, just words');
+  assert.throws(() => splitArgs('"open'), /not closed/);
+  const keys = generateKeyPair();
+  const ch = new Channel(tmp(), keys.privateKey);
+  ch.upsertGame({ id: 'soon-game', name: 'Soon', kind: 'pc' });
+  assert.ok(ch.read().games[0].addedAt);
+  assert.throws(() => ch.setGameInfo('soon-game', { screenshots: ['http://x.test/a.png'] }), /https/);
+  assert.throws(() => ch.setGameInfo('soon-game', { trailer: 'https://evil.test/watch' }), /YouTube/);
+  assert.throws(() => ch.setGameInfo('soon-game', { comingSoon: 'next week' }), /coming soon date/);
+  const future = new Date(Date.now() + 3 * 86400000).toISOString();
+  ch.setGameInfo('soon-game', { screenshots: ['https://x.test/a.png', 'https://x.test/b.png'], trailer: 'https://youtu.be/abc', comingSoon: future });
+  const cat = ch.read();
+  // no versions yet, but coming soon: players can see it (without anything to install)
+  const view = playerView(cat, { role: 'user' });
+  assert.equal(view.games.length, 1);
+  assert.equal(view.games[0].releases.length, 0);
+  ch.setGameInfo('soon-game', { comingSoon: '' });
+  assert.equal(playerView(ch.read(), { role: 'user' }).games.length, 0);
+  // launch options saved per installed game
+  const dir = tmp();
+  const inst = new Installer(path.join(dir, 'lib'));
+  assert.throws(() => inst.setLaunchArgs('nope', 'x'), /not installed/);
+  inst._save({ g1: { version: '1', exe: 'a.exe', dir } });
+  assert.equal(inst.setLaunchArgs('g1', '  --big\n--x  '), '--big --x');
+  assert.equal(inst.installed().g1.launchArgs, '--big --x');
+  inst.setLaunchArgs('g1', '');
+  assert.equal(inst.installed().g1.launchArgs, undefined);
+  // desktop shortcut
+  const { shortcutPlan, playArg, safeFileName } = require('../core/shortcut');
+  const p = shortcutPlan({ gameId: 'railrove', name: 'Rail:rove?', desktop: 'C:\\Users\\z\\Desktop', execPath: 'C:\\ZL\\Zero Launcher.exe', isPackaged: true });
+  assert.match(p.file, /Railrove\.lnk$/);
+  assert.equal(p.options.args, '--play=railrove');
+  assert.throws(() => shortcutPlan({ gameId: '../x', name: 'x', desktop: '/d', execPath: '/e' }), /Bad game id/);
+  assert.equal(playArg(['x', '--play=railrove']), 'railrove');
+  assert.equal(playArg(['--play=../../evil']), null);
+  assert.equal(safeFileName('..'), 'Game');
+});
+
+test('tester helpers: what to test note, crash rules, Godot log lines', () => {
+  const keys = generateKeyPair();
+  const ch = new Channel(tmp(), keys.privateKey);
+  ch.upsertGame({ id: 'tg', name: 'T', kind: 'pc' });
+  ch.read();
+  const cat = ch.read(); cat.games[0].releases.push({ version: '1.0', state: 'testing', exe: 'a.exe', file: { url: 'x', size: 1, sha256: 'a'.repeat(64) } });
+  ch._write(cat);
+  ch.setTestNotes('tg', '1.0', 'Try the new bridge');
+  assert.equal(ch.read().games[0].releases[0].testNotes, 'Try the new bridge');
+  assert.throws(() => ch.setTestNotes('tg', '1.0', 'x'.repeat(601)), /too long/);
+  const crash = require('../core/crash');
+  assert.equal(crash.isCrash(1, 5000), true);
+  assert.equal(crash.isCrash(0, 5000), false, 'normal close');
+  assert.equal(crash.isCrash(1, 3 * 60 * 1000), false, 'after 2 minutes it is not a crash');
+  assert.equal(crash.isCrash(null, 100, new Error('ENOENT')), true);
+  const appData = tmp();
+  const logs = path.join(appData, 'Godot', 'app_userdata', 'Railrove', 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  fs.writeFileSync(path.join(logs, 'godot.log'), Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\n'));
+  const f = crash.godotLogFile(appData, ['../evil', 'Railrove']);
+  assert.equal(f, path.join(logs, 'godot.log'));
+  assert.equal(crash.godotLogFile(appData, ['..', 'a/b']), null);
+  const text = crash.crashReport({ gameName: 'Railrove', gameId: 'railrove', version: '0.20.0', code: 3, launcher: '0.3.0', platform: 'win32', logFile: f });
+  assert.match(text, /Exit code: 3/);
+  assert.match(text, /line 300/);
+  assert.match(text, /line 101\n/);
+  assert.doesNotMatch(text, /line 100\n/, 'only the last 200 lines');
+});
+
+test('developer power 2: download counts (cached 10 min), Discord post rules, key backup', async () => {
+  const { DownloadStats } = require('../core/stats');
+  let calls = 0; let t = 0;
+  const fakeFetch = async (url) => { calls++; assert.match(url, /\/repos\/me\/chan\/releases\/tags\/channel$/); return { ok: true, status: 200, json: async () => ({ assets: [{ name: 'rr-1.0.zip', download_count: 7 }, { name: 'rr-1.1.zip', download_count: 3 }] }) }; };
+  const st = new DownloadStats({ repo: 'me/chan', fetchImpl: fakeFetch, now: () => t });
+  let c = await st.counts();
+  assert.equal(c.byFile['rr-1.0.zip'], 7);
+  t += 5 * 60000; await st.counts(); assert.equal(calls, 1, 'cached');
+  t += 6 * 60000; await st.counts(); assert.equal(calls, 2, 'after 10 minutes asks again');
+  const per = DownloadStats.perVersion({ games: [{ id: 'rr', releases: [{ version: '1.0', file: { url: 'packages/rr/rr-1.0.zip' } }, { version: '1.1', file: { url: 'packages/rr/rr-1.1.zip' } }] }] }, c.byFile);
+  assert.deepEqual(per.rr, { total: 10, versions: { '1.0': 7, '1.1': 3 } });
+  const down = new DownloadStats({ repo: 'me/chan', fetchImpl: async () => { throw new Error('offline'); } });
+  c = await down.counts(); assert.match(c.error, /Could not get/);
+
+  const discord = require('../core/discord');
+  assert.equal(discord.isWebhook('https://discord.com/api/webhooks/123/abc-DEF_1'), true);
+  assert.equal(discord.isWebhook('http://discord.com/api/webhooks/123/abc'), false);
+  assert.equal(discord.isWebhook('https://evil.test/api/webhooks/123/abc'), false);
+  const msg = discord.releaseMessage({ name: 'Railrove' }, { version: '0.20.0', notes: 'New wagons' });
+  assert.match(msg, /Railrove 0\.20\.0/); assert.match(msg, /New wagons/);
+  let posted = null;
+  await discord.post('https://discord.com/api/webhooks/1/x', 'Hi @everyone', async (u, o) => { posted = JSON.parse(o.body); return { ok: true, status: 204 }; });
+  assert.deepEqual(posted.allowed_mentions, { parse: [] }, 'never pings everyone');
+  await assert.rejects(discord.post('https://evil.test/x', 'hi', async () => ({ ok: true })), /looks wrong/);
+  await assert.rejects(discord.post('https://discord.com/api/webhooks/1/x', 'x'.repeat(2001), async () => ({ ok: true })), /too long/);
+
+  const { backupKey, backupWarningDue } = require('../core/keybackup');
+  const home = tmp(), usb = tmp(), channel = tmp();
+  const key = path.join(home, 'zero-private.pem');
+  fs.writeFileSync(key, generateKeyPair().privateKey);
+  assert.throws(() => backupKey({ keyFile: key, toDir: channel, forbidden: [channel] }), /Not this folder/);
+  assert.throws(() => backupKey({ keyFile: key, toDir: path.join(channel, 'packages'), forbidden: [channel] }), /Pick a folder|Not this folder/);
+  assert.throws(() => backupKey({ keyFile: key, toDir: home, forbidden: [] }), /another place/);
+  const a = backupKey({ keyFile: key, toDir: usb, forbidden: [channel] });
+  const b = backupKey({ keyFile: key, toDir: usb, forbidden: [channel] });
+  assert.notEqual(a.file, b.file, 'never overwrites');
+  assert.equal(fs.readFileSync(a.file, 'utf8'), fs.readFileSync(key, 'utf8'));
+  const now = Date.parse('2026-11-04T00:00:00Z');
+  assert.equal(backupWarningDue({ now }), true);
+  assert.equal(backupWarningDue({ lastWarning: '2026-11-01T00:00:00Z', now }), false, 'once a month');
+  assert.equal(backupWarningDue({ lastBackup: '2026-10-20T00:00:00Z', now }), false);
+  assert.equal(backupWarningDue({ lastBackup: '2026-09-01T00:00:00Z', lastWarning: '2026-09-20T00:00:00Z', now }), true);
+});
+
+test('player settings: download speed limit, move game safely, uninstall question', async () => {
+  const { downloadTo } = require('../core/net');
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'big.bin'), crypto.randomBytes(300000));
+  const srv = await serve(dir);
+  try {
+    const url = `http://127.0.0.1:${srv.address().port}/big.bin`;
+    let t0 = Date.now();
+    await downloadTo(url, path.join(dir, 'fast.bin'));
+    const fast = Date.now() - t0;
+    t0 = Date.now();
+    await downloadTo(url, path.join(dir, 'slow.bin'), { maxBytesPerSec: () => 150000 });
+    const slow = Date.now() - t0;
+    assert.ok(slow >= 1500, `limited download took ${slow} ms`);
+    assert.ok(fast < slow);
+    assert.equal(fs.readFileSync(path.join(dir, 'slow.bin')).compare(fs.readFileSync(path.join(dir, 'big.bin'))), 0);
+  } finally { srv.close(); }
+
+  // move game
+  const root = tmp(), other = tmp();
+  const inst = new Installer(path.join(root, 'lib'));
+  const gdir = path.join(inst.gamesDir, 'mover', '1.0');
+  fakeBuild(gdir, 'm');
+  inst._save({ mover: { version: '1.0', exe: 'TestGame.exe', dir: gdir } });
+  await assert.rejects(inst.moveGame('mover', gdir), /outside the game folder/);
+  // a broken record that points somewhere else is refused, and nothing is removed
+  const elsewhere = tmp(); fs.writeFileSync(path.join(elsewhere, 'keep.txt'), 'x');
+  inst._save({ mover: { version: '1.0', exe: 'TestGame.exe', dir: elsewhere } });
+  await assert.rejects(inst.moveGame('mover', other), /folder looks wrong/);
+  assert.ok(fs.existsSync(path.join(elsewhere, 'keep.txt')));
+  inst._save({ mover: { version: '1.0', exe: 'TestGame.exe', dir: gdir } });
+  fs.mkdirSync(path.join(other, 'mover', '1.0'), { recursive: true }); // something already there
+  await assert.rejects(inst.moveGame('mover', other), /already a game folder/);
+  assert.ok(fs.existsSync(path.join(gdir, 'TestGame.exe')), 'old copy kept when the move fails');
+  assert.ok(!fs.existsSync(path.join(other, 'mover', '1.0.moving')), 'half copy removed');
+  fs.rmSync(path.join(other, 'mover'), { recursive: true });
+  const r = await inst.moveGame('mover', other);
+  assert.equal(r.dir, path.join(other, 'mover', '1.0'));
+  assert.ok(fs.existsSync(path.join(r.dir, 'data', 'game.pck')));
+  assert.ok(!fs.existsSync(gdir), 'old copy removed after the check');
+  assert.equal(inst.installed().mover.base, path.resolve(other));
+  inst.uninstall('mover');
+  assert.ok(!fs.existsSync(path.join(other, 'mover')), 'uninstall removes the moved game');
+
+  const nsh = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
+  assert.match(nsh, /Also remove installed games\?/);
+  assert.match(nsh, /MB_DEFBUTTON2/, 'default answer is No');
+  assert.match(nsh, /\/SD IDNO/); assert.match(nsh, /IfSilent/); assert.match(nsh, /isUpdated/);
+  assert.equal(require('../package.json').build.nsis.include, 'build/installer.nsh');
+});
+
+test('projects: seed merges games + other projects, scrapped from notes go to the graveyard', () => {
+  const P = require('../core/projects');
+  const hubSeed = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app', 'data', 'hub-seed.json'), 'utf8'));
+  const projectsSeed = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app', 'data', 'projects-seed.json'), 'utf8'));
+  const list = P.seedList({ hubSeed, projectsSeed, hubProjects: [{ id: 'railrove', name: 'Railrove', path: '/x/rr' }] });
+  const by = (id) => list.find((p) => p.id === id);
+  assert.ok(by('pop-storm') && by('pop-storm').type === 'web', 'games stay');
+  assert.equal(by('world-engine').type, 'dnd', 'project seed wins over the game seed');
+  assert.ok(by('railrove').folders.includes('E:\\Dustrunner') && by('railrove').folders.includes('/x/rr'));
+  assert.equal(by('roblox-shape-army').type, 'roblox');
+  assert.equal(by('repo-emberwild').stage, 'unknown');
+  const graveyard = list.filter((p) => p.stage === 'scrapped').map((p) => p.name).sort();
+  assert.deepEqual(graveyard, ['Cryptogram', 'Glowcube Gardens', 'Junkyard Jingles', 'Lantern Road', 'Mall-ien Empire']);
+  assert.ok(!JSON.stringify(list).includes("Alex"), 'Lantern Road is shown only by that name');
+  for (const p of list) { assert.match(p.id, P.ID_RE); assert.ok([1, 2, 3].includes(p.priority)); assert.ok(Array.isArray(p.history)); }
+});
+
+test('projects: forgotten days by priority, waiting on you, default view, filters', () => {
+  const P = require('../core/projects');
+  const now = Date.parse('2026-11-20T12:00:00Z');
+  const ago = (d) => new Date(now - d * 86400000).toISOString();
+  const mk = (id, priority, days, stage = 'building', extra = {}) => ({ id, name: id, type: 'pc', stage, priority, folders: [], waitingOn: 'nobody', nextStep: 'n-' + id, lastTouched: ago(days), history: [], ...extra });
+  const list = [mk('p1-6', 1, 6), mk('p1-7', 1, 7), mk('p2-13', 2, 13), mk('p2-14', 2, 14), mk('p3-29', 3, 29), mk('p3-40', 3, 40),
+    mk('hold', 1, 99, 'on-hold'), mk('rel', 1, 99, 'released'), mk('dead', 1, 99, 'scrapped'), mk('wait', 2, 1, 'needs-playtest', { waitingOn: 'zero' }),
+    mk('relfix', 2, 1, 'released', { needsWork: 'crash on start' }), mk('deadwait', 2, 1, 'scrapped', { waitingOn: 'zero' })];
+  const f = P.forgotten(list, now).map((x) => x.id);
+  assert.deepEqual(f.sort(), ['p1-7', 'p2-14', 'p3-40'].sort());
+  assert.equal(P.forgotten(list, now).find((x) => x.id === 'p3-40').days, 40);
+  assert.deepEqual(P.waitingOnYou(list).map((x) => x.id), ['wait']);
+  const v = P.visible(list).map((p) => p.id);
+  assert.ok(v.includes('relfix') && !v.includes('rel') && !v.includes('dead') && !v.includes('deadwait'));
+  assert.ok(!P.visible(list, { stage: 'scrapped' }).length, 'scrapped never shows in the list, only in the graveyard');
+  assert.deepEqual(P.visible(list, { q: 'n-wait' }).map((p) => p.id), ['wait']);
+  assert.deepEqual(P.visible(list, { priority: 3 }).map((p) => p.id), ['p3-29', 'p3-40']);
+  assert.deepEqual(P.visible(list, { waitingOn: 'zero' }).map((p) => p.id), ['wait']);
+  // review: most forgotten first, max 10, no scrapped, no released unless needs work
+  const big = [...list, ...Array.from({ length: 12 }, (_, i) => mk('x' + i, 2, i))];
+  const q = P.reviewQueue(big, now);
+  assert.equal(q.length, 10);
+  assert.equal(q[0].id, 'hold');
+  assert.ok(!q.some((x) => x.id === 'dead' || x.id === 'rel'));
+  // reminder: once a day, only when something is forgotten
+  assert.deepEqual(P.reminderDue(null, 2, now), { key: '2026-11-20', show: true });
+  assert.equal(P.reminderDue('2026-11-20', 2, now), null);
+  assert.equal(P.reminderDue('2026-11-19', 0, now).show, false);
+});
+
+test('projects: scrap hides everywhere, needs a reason, never deletes files; only bringBack un-scraps', () => {
+  const P = require('../core/projects');
+  const weekly = require('../core/weekly');
+  const dir = tmp(); const folder = path.join(dir, 'Game'); fs.mkdirSync(folder); fs.writeFileSync(path.join(folder, 'a.txt'), 'keep me');
+  const store = new P.ProjectStore(path.join(dir, 'projects.json'), { hubSeed: { games: [] }, projectsSeed: { projects: [
+    { id: 'alpha', name: 'Alpha', type: 'pc', stage: 'building', folders: [folder], priority: 1 },
+    { id: 'beta', name: 'Beta', type: 'web', stage: 'needs-playtest', waitingOn: 'zero' }] } });
+  const now = Date.parse('2026-12-01T10:00:00Z');
+  store.load(now);
+  assert.throws(() => store.scrap('alpha', '  ', now), /why/);
+  store.scrap('alpha', 'Not fun anymore', now);
+  assert.ok(fs.existsSync(path.join(folder, 'a.txt')), 'files are never deleted');
+  let d = store.load();
+  const a = d.projects.find((p) => p.id === 'alpha');
+  assert.equal(a.stage, 'scrapped'); assert.equal(a.scrapReason, 'Not fun anymore'); assert.match(a.history.pop().what, /Scrapped/);
+  assert.ok(!P.visible(d.projects).some((p) => p.id === 'alpha'));
+  assert.ok(!P.forgotten(d.projects, now + 99 * 86400000).some((p) => p.id === 'alpha'));
+  assert.ok(!P.reviewQueue(d.projects, now).some((p) => p.id === 'alpha'));
+  assert.ok(P.weekAllowed(d.projects).blocked.has('alpha'));
+  const hub = { games: [{ id: 'alpha', name: 'Alpha', status: 'testing' }, { id: 'beta', name: 'Beta', status: 'testing' }] };
+  const allowed = P.weekAllowed(d.projects);
+  const plan = weekly.suggest({ games: hub.games.filter((g) => !allowed.blocked.has(g.id)) }, []);
+  assert.ok(!JSON.stringify(plan).includes('Alpha'), 'never in This week');
+  assert.ok(!JSON.stringify(weekly.suggest({ games: [] }, ['Alpha', 'Gamma'], ['Alpha'])).includes('Alpha'), 'a focus on a scrapped project is left out');
+  assert.throws(() => store.update('alpha', { stage: 'building' }), /Bring it back first/);
+  assert.throws(() => store.update('beta', { stage: 'scrapped' }), /Scrap project/);
+  // scrapped launcher game: warning (website state is only read, never changed)
+  const st = P.status(a, { site: { states: { alpha: 'released' } }, channel: { games: [{ id: 'alpha', releases: [{ version: '1.0', state: 'released' }] }] } });
+  assert.ok(st.warnings.some((w) => /remember to also hide it on the website/.test(w)));
+  assert.deepEqual(st.facts.channel.value, { released: ['1.0'] });
+  assert.equal(st.facts.siteState.source, 'website releases.json (read only)');
+  store.bringBack('alpha', now + 1000);
+  d = store.load();
+  const back = d.projects.find((p) => p.id === 'alpha');
+  assert.equal(back.stage, 'building'); assert.ok(!back.scrapReason); assert.match(back.history.pop().what, /Brought back by Zero/);
+  assert.throws(() => store.bringBack('alpha'), /not scrapped/);
+  // quick review saves each choice in history; the week plan then only uses "Keep going"
+  store.review('beta', 'keep', { weekKey: '2026-11-27' }, now);
+  store.review('alpha', 'pause', { weekKey: '2026-11-27' }, now);
+  d = store.load();
+  assert.equal(d.projects.find((p) => p.id === 'alpha').stage, 'on-hold');
+  assert.match(d.projects.find((p) => p.id === 'beta').history.pop().what, /Keep going/);
+  assert.deepEqual(d.reviews['2026-11-27'].done, ['beta', 'alpha']);
+  const w = P.weekAllowed(d.projects);
+  assert.ok(w.ok.has('beta') && w.blocked.has('alpha') && w.reviewed);
+  assert.throws(() => store.review('beta', 'scrap', {}, now), /why/, 'scrap in review also needs a reason');
+  store.review('beta', 'scrap', { reason: 'Too big' }, now);
+  assert.equal(store.load().projects.find((p) => p.id === 'beta').stage, 'scrapped');
+  // atomic file: no temp files left
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+});
+
+test('projects: exact status is read only; new folder suggestions skip known, ignored and system folders', () => {
+  const P = require('../core/projects');
+  const root = tmp();
+  const g = path.join(root, 'Kindle'); fs.mkdirSync(path.join(g, 'build'), { recursive: true });
+  fs.writeFileSync(path.join(g, 'project.godot'), 'config/name="Kindle"\nconfig/version="0.3"\n');
+  fs.writeFileSync(path.join(g, 'build', 'Kindle.exe'), 'x');
+  const node = path.join(root, 'Tool'); fs.mkdirSync(node); fs.writeFileSync(path.join(node, 'package.json'), '{"version":"2.1.0"}');
+  const rbx = path.join(root, 'Robloxy'); fs.mkdirSync(rbx); fs.writeFileSync(path.join(rbx, 'place.rbxlx'), '<roblox/>');
+  const snap = () => JSON.stringify(fs.readdirSync(root, { recursive: true }).sort().map((f) => [f, fs.statSync(path.join(root, f)).mtimeMs]));
+  const before = snap();
+  const p = (folders) => ({ id: 'x', stage: 'building', folders, lastTouched: '2026-01-01T00:00:00Z' });
+  const s1 = P.status(p([g, path.join(root, 'Gone')]));
+  assert.equal(s1.facts.version.value, '0.3'); assert.match(s1.facts.version.source, /godot/);
+  assert.match(s1.facts.lastBuild.value.exe, /Kindle\.exe$/);
+  assert.match(s1.facts.changed.source, /^folder /);
+  assert.ok(s1.warnings.some((w) => /^Folder not found/.test(w)));
+  assert.ok(s1.lastChange > '2026-01-01');
+  assert.equal(P.status(p([node])).facts.version.value, '2.1.0');
+  assert.equal(P.status(p([node])).facts.version.source, 'package.json');
+  assert.equal(P.status(p([rbx])).facts.robloxFile.value.file, 'place.rbxlx');
+  assert.equal(snap(), before, 'status never changes anything in the folders');
+  // new folders: top level only
+  for (const n of ['$RECYCLE.BIN', 'System Volume Information', 'Windows', '.hidden', 'NewGame', 'IgnoreMe', 'Games']) fs.mkdirSync(path.join(root, n), { recursive: true });
+  fs.mkdirSync(path.join(root, 'Games', 'Deep')); fs.writeFileSync(path.join(root, 'file.txt'), 'x');
+  const list = [{ folders: [g, node, rbx, path.join(root, 'Games', 'Deep')] }];
+  const found = P.newFolders([root, path.join(root, 'nope')], list, [path.join(root, 'IgnoreMe')]).map((x) => x.name);
+  assert.deepEqual(found, ['NewGame']);
+  let deep = 0;
+  P.newFolders([root], list, [], (d) => { deep++; return fs.readdirSync(d, { withFileTypes: true }); });
+  assert.equal(deep, 1, 'only the top folder is read');
+  // report: html is escaped, markdown has every box
+  const rep = P.report([{ id: 'a', name: '<b>x</b>', type: 'web', stage: 'building', priority: 1, waitingOn: 'zero', nextStep: 'go', folders: [], lastTouched: '2026-01-01T00:00:00Z' }], Date.parse('2026-02-01T00:00:00Z'));
+  assert.ok(!rep.html.includes('<b>x</b>') && rep.html.includes('&lt;b&gt;x&lt;/b&gt;'));
+  for (const s of ['Waiting on you (1)', "Don't forget (1)", 'Web game (1)', 'Scrapped this week (0)']) assert.ok(rep.markdown.includes(s), s);
+});
+
+test('projects: archive zip keeps the original folder and refuses a target inside it', async () => {
+  const P = require('../core/projects');
+  const root = tmp(); const src = path.join(root, 'Old Game'); fs.mkdirSync(path.join(src, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'sub', 'a.txt'), 'hello');
+  await assert.rejects(P.archiveFolder(src, path.join(src, 'zips'), 'Old Game'), /outside the project folder/);
+  const now = Date.parse('2026-11-04T00:00:00Z');
+  const f1 = await P.archiveFolder(src, path.join(root, 'Archive'), 'Old Game', now);
+  const f2 = await P.archiveFolder(src, path.join(root, 'Archive'), 'Old Game', now);
+  assert.equal(path.basename(f1), 'old-game-2026-11-04.zip'); assert.equal(path.basename(f2), 'old-game-2026-11-04-2.zip');
+  assert.equal(fs.readFileSync(path.join(src, 'sub', 'a.txt'), 'utf8'), 'hello', 'original untouched');
+  const out = path.join(root, 'unzipped');
+  await require('../core/zip').unpack(f1, out);
+  assert.equal(fs.readFileSync(path.join(out, 'sub', 'a.txt'), 'utf8'), 'hello');
+});
+
+test('play time + badges: added up per game, capped per session, kept on this PC only', () => {
+  const pt = require('../core/playtime');
+  const file = path.join(tmp(), 'playtime.json');
+  const day = (n) => new Date(2026, 10, n, 12);
+  let s = pt.record(file, 'railrove', 10 * 60000, { now: day(1) });
+  assert.equal(s.plays, 1); assert.deepEqual(s.badges.map((b) => b.id), ['first']);
+  s = pt.record(file, 'railrove', 55 * 60000, { now: day(1) });
+  assert.deepEqual(s.badges.map((b) => b.id), ['first', 'hour']);
+  for (let d = 2; d <= 5; d++) s = pt.record(file, 'railrove', 60000, { now: day(d) });
+  assert.ok(s.badges.some((b) => b.id === 'days5'));
+  s = pt.record(file, 'railrove', 99 * 3600000, { now: day(6), test: true }); // left open for days
+  assert.equal(s.ms, 10 * 60000 + 55 * 60000 + 4 * 60000 + pt.MAX_SESSION);
+  assert.deepEqual(s.badges.map((b) => b.id), ['first', 'hour', 'days5', 'hours10', 'tester']);
+  assert.throws(() => pt.record(file, '../x', 1), /Bad game id/);
+  pt.record(file, '__proto__'.replace(/_/g, 'a'), 1); // fine id
+  assert.deepEqual(Object.keys(pt.all(file)).sort(), ['aaprotoaa', 'railrove']);
+  assert.equal(pt.pretty(30000), 'less than 1 min'); assert.equal(pt.pretty(135 * 60000), '2 h 15 min'); assert.equal(pt.pretty(15 * 60000), '15 min');
+  assert.equal(({}).ms, undefined);
+});
+
+test('tester feedback: code round trip, bad or sneaky codes skipped, no doubles, average per version', () => {
+  const fb = require('../core/feedback');
+  const at = '2026-11-04T10:00:00.000Z';
+  const c1 = fb.makeCode({ g: 'railrove', v: '0.20.0', s: 4, t: 'Bridge  feels\ngreat', a: 'SAM-4F2A-9C1B', at });
+  const c2 = fb.makeCode({ g: 'railrove', v: '0.20.0', s: 2, t: '', a: '', at: '2026-11-04T11:00:00.000Z' });
+  assert.match(c1, /^ZLFB1:[A-Za-z0-9_-]+$/);
+  assert.deepEqual(fb.parse(`hi Zero!\n${c1}\nbye`).found, [{ g: 'railrove', v: '0.20.0', s: 4, t: 'Bridge feels great', a: 'SAM-4F2A-9C1B', at }]);
+  assert.throws(() => fb.makeCode({ g: 'railrove', v: '0.20.0', s: 6, at }), /Bad feedback/);
+  const evil = (o) => 'ZLFB1:' + Buffer.from(JSON.stringify(o)).toString('base64url');
+  const base = { g: 'railrove', v: '0.20.0', s: 3, t: '', a: '', at };
+  for (const bad of [{ ...base, s: 9 }, { ...base, s: '5' }, { ...base, g: '../x' }, { ...base, v: 'abc' }, { ...base, t: 'x'.repeat(201) },
+    { ...base, a: 'not an id' }, { ...base, at: 'yesterday' }, [1, 2, 3, 4, 5], JSON.parse('{"__proto__":{"admin":1}}')]) {
+    assert.deepEqual(fb.parse(evil(bad)), { found: [], bad: 1 }, JSON.stringify(bad));
+  }
+  assert.deepEqual(fb.parse('ZLFB1:!!!not-base64!!!').found, []);
+  const store = new fb.FeedbackStore(path.join(tmp(), 'feedback.json'));
+  assert.deepEqual(store.add(`${c1} ${c2} ${evil({ ...base, s: 0 })}`), { added: 2, same: 0, bad: 1 });
+  assert.deepEqual(store.add(c1), { added: 0, same: 1, bad: 0 }, 'no doubles');
+  const [grp] = store.grouped();
+  assert.equal(grp.average, 3); assert.equal(grp.items.length, 2); assert.equal(grp.items[0].s, 2, 'newest first');
+  assert.equal(store.remove(at, 'SAM-4F2A-9C1B'), 1); assert.equal(store.all().length, 1);
+  assert.equal(({}).admin, undefined);
+});
+
+test('launcher log: one line per event, secrets blanked, never more than about 2 MB', () => {
+  const { Log, clean } = require('../core/log');
+  const dir = tmp(); const log = new Log(dir, { max: 2000 });
+  log.info('start 1.0'); log.warn('two\nlines'); log.error(new Error('boom'));
+  const lines = fs.readFileSync(path.join(dir, 'launcher.log'), 'utf8').trim().split('\n');
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /^\d{4}-\d\d-\d\dT[\d:.]+Z INFO  start 1\.0$/); assert.match(lines[1], /WARN  two lines$/); assert.match(lines[2], /ERROR boom$/);
+  const pem = '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIabc\n-----END PRIVATE KEY-----';
+  for (const s of [pem, 'push failed ghp_abcdefghijklmnopqrstuvwxyz0123', 'token=abc123secret', '{"password":"hunter2"}', 'github_pat_11ABCDEFGHIJKLMNOPQRSTUV_xyz']) {
+    assert.doesNotMatch(clean(s), /MC4CAQ|ghp_abc|abc123secret|hunter2|github_pat_11/, s);
+  }
+  assert.equal(clean('x'.repeat(9000)).length, 500);
+  for (let i = 0; i < 200; i++) log.info('line ' + i);
+  assert.ok(fs.existsSync(path.join(dir, 'launcher.old.log')), 'old file kept');
+  assert.ok(fs.statSync(path.join(dir, 'launcher.log')).size <= 2100);
+  assert.match(log.tail(), /line 199\n$/);
+  assert.ok(log.tail(300).length <= 300); assert.match(log.tail(300), /^\d{4}-/, 'starts at a whole line');
+  new Log(path.join(dir, 'launcher.log', 'nope')).info('x'); // a broken folder never throws
+});
+
+test('launcher backup: settings, account, play time, reports; never keys, developer.json or friend.json; sneaky zips refused', async () => {
+  const backup = require('../core/backup');
+  const yazl = require('yazl');
+  const REPORT_RE = /^[a-z0-9][a-z0-9-]{1,40}-(crash-)?\d{10,16}\.txt$/;
+  const opts = { reportRe: REPORT_RE, settingsClean: (o) => Object.fromEntries(Object.entries(o).filter(([k]) => ['lang', 'textSize'].includes(k))),
+    accountOk: (a) => testers.ID_RE.test(a.id || '') };
+  const a = tmp();
+  fs.writeFileSync(path.join(a, 'settings.json'), JSON.stringify({ lang: 'nl', installRoot: '/games', admin: true }));
+  fs.writeFileSync(path.join(a, 'account.json'), JSON.stringify({ name: 'Sam', id: 'SAM-4F2A-9C1B' }));
+  fs.writeFileSync(path.join(a, 'playtime.json'), JSON.stringify({ railrove: { ms: 5, plays: 1 } }));
+  for (const f of ['developer.json', 'friend.json', 'friend-private.pem']) fs.writeFileSync(path.join(a, f), 'SECRET');
+  fs.mkdirSync(path.join(a, 'reports')); fs.writeFileSync(path.join(a, 'reports', 'railrove-1234567890123.txt'), 'report'); fs.writeFileSync(path.join(a, 'reports', 'other.txt'), 'x');
+  const zip = path.join(tmp(), 'b.zip');
+  const names = await backup.make(a, zip, opts);
+  assert.deepEqual(names.sort(), ['account.json', 'playtime.json', 'reports/railrove-1234567890123.txt', 'settings.json']);
+  const { files, at } = await backup.read(zip, opts);
+  assert.ok(at); assert.deepEqual(files.get('settings.json'), { lang: 'nl' }, 'no installRoot, no unknown keys');
+  const b = tmp();
+  fs.writeFileSync(path.join(b, 'settings.json'), JSON.stringify({ installRoot: 'D:/Games' }));
+  backup.restore(b, files, { keepSettings: { installRoot: 'D:/Games' } });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(b, 'settings.json'), 'utf8')), { lang: 'nl', installRoot: 'D:/Games' });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(b, 'playtime.json'), 'utf8')).railrove.plays, 1);
+  assert.equal(fs.readFileSync(path.join(b, 'reports', 'railrove-1234567890123.txt'), 'utf8'), 'report');
+  assert.ok(!fs.readdirSync(b).some((f) => /developer|friend|pem/.test(f)));
+  // hand-made zips
+  const mk = (entries) => new Promise((res) => { const z = new yazl.ZipFile(); for (const [n, d] of entries) z.addBuffer(Buffer.from(d), n); const out = path.join(tmp(), 'x.zip'); z.outputStream.pipe(fs.createWriteStream(out)).on('close', () => res(out)); z.end(); });
+  const mark = [backup.MARK, JSON.stringify({ app: 'Zero Launcher' })];
+  await assert.rejects(backup.read(await mk([['settings.json', '{}']]), opts), /not a Zero Launcher backup/);
+  const slip = await mk([mark, ['xx/evil.json', '{}']]);
+  fs.writeFileSync(slip, Buffer.from(fs.readFileSync(slip).toString('latin1').split('xx/evil.json').join('../evil.json'), 'latin1'));
+  await assert.rejects(backup.read(slip, opts), /Unsafe file path|invalid relative path/);
+  const empty = await backup.read(await mk([mark, ['developer.json', '{}'], ['account.json', '{"id":"nope"}'], ['playtime.json', 'not json'], ['feedback.json', '5'], ['reports/evil.exe', 'x']]), opts);
+  assert.equal(empty.files.size, 0);
+});
+
+test('launcher self-update: signed list names the setup; players only after Send to players; newer only; checked before start', async () => {
+  const su = require('../core/selfupdate');
+  const { validate } = require('../core/catalogue');
+  const keys = generateKeyPair();
+  const dir = tmp(); const ch = new Channel(dir, keys.privateKey);
+  await assert.rejects(ch.setLauncher(path.join(tmp(), 'evil.exe')), /ZeroLauncherSetup/);
+  const exe = path.join(tmp(), 'ZeroLauncherSetup-0.2.0.exe'); fs.writeFileSync(exe, 'MZ fake setup 0.2.0');
+  const l = await ch.setLauncher(exe, 'Faster start');
+  assert.equal(l.version, '0.2.0'); assert.equal(l.released, false); assert.match(l.file.sha256, /^[a-f0-9]{64}$/);
+  let cat = await loadChannel(dir, keys.publicKey); // signature checked
+  assert.equal(su.available(cat, '0.1.0'), null, 'players: not before Send to players');
+  assert.equal(su.available(cat, '0.1.0', { developer: true }).version, '0.2.0', 'Zero sees it first');
+  ch.releaseLauncher();
+  cat = ch.read();
+  assert.equal(su.available(cat, '0.1.0').notes, 'Faster start');
+  assert.equal(su.available(cat, '0.2.0'), null, 'same version: nothing');
+  assert.equal(su.available(cat, '0.3.0'), null, 'never go back to an older launcher');
+  const old = path.join(tmp(), 'ZeroLauncherSetup-0.1.5.exe'); fs.writeFileSync(old, 'x');
+  await assert.rejects(ch.setLauncher(old), /already has a newer launcher/);
+  // bad entries are refused by the list check
+  for (const bad of [{ url: 'packages/launcher/../../evil.exe' }, { url: 'https://evil.example/ZeroLauncherSetup-9.exe' }, { sha256: 'abc' }, { size: -1 }]) {
+    assert.ok(validate({ ...cat, launcher: { ...cat.launcher, file: { ...cat.launcher.file, ...bad } } }).some((e) => /launcher/.test(e)), JSON.stringify(bad));
+  }
+  // download from the channel folder, checked
+  const out = tmp();
+  const f = await su.download(cat, '0.1.0', dir, out);
+  assert.equal(path.basename(f), 'ZeroLauncherSetup-0.2.0.exe'); assert.equal(fs.readFileSync(f, 'utf8'), 'MZ fake setup 0.2.0');
+  // someone swaps the file in the channel: refused and removed
+  fs.writeFileSync(path.join(dir, cat.launcher.file.url), 'MZ evil');
+  fs.rmSync(f);
+  await assert.rejects(su.download(cat, '0.1.0', dir, out), /check failed/);
+  assert.deepEqual(fs.readdirSync(out), [], 'nothing left that could be started');
+  await assert.rejects(su.download(cat, '0.2.0', dir, out), /No new launcher/);
+});
