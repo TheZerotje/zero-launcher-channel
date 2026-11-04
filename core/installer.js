@@ -202,6 +202,9 @@ class Installer {
     if (!info) throw new Error('Game is not installed');
     if (!path.isAbsolute(newBase) || !fs.existsSync(newBase) || !fs.statSync(newBase).isDirectory()) throw new Error('Pick a folder');
     const from = path.resolve(info.dir);
+    // Safety: the old folder must really be this game's version folder (<base>/<game id>/<version>), so the
+    // clean-up after the move can never remove anything else.
+    if (path.basename(from) !== info.version || path.basename(path.dirname(from)) !== gameId) throw new Error('The game folder looks wrong. Use Repair first.');
     const to = path.resolve(newBase, gameId, info.version);
     if (to === from) throw new Error('The game is already in that folder');
     const rel = path.relative(from, path.resolve(newBase));

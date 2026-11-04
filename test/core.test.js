@@ -729,6 +729,12 @@ test('player settings: download speed limit, move game safely, uninstall questio
   fakeBuild(gdir, 'm');
   inst._save({ mover: { version: '1.0', exe: 'TestGame.exe', dir: gdir } });
   await assert.rejects(inst.moveGame('mover', gdir), /outside the game folder/);
+  // a broken record that points somewhere else is refused, and nothing is removed
+  const elsewhere = tmp(); fs.writeFileSync(path.join(elsewhere, 'keep.txt'), 'x');
+  inst._save({ mover: { version: '1.0', exe: 'TestGame.exe', dir: elsewhere } });
+  await assert.rejects(inst.moveGame('mover', other), /folder looks wrong/);
+  assert.ok(fs.existsSync(path.join(elsewhere, 'keep.txt')));
+  inst._save({ mover: { version: '1.0', exe: 'TestGame.exe', dir: gdir } });
   fs.mkdirSync(path.join(other, 'mover', '1.0'), { recursive: true }); // something already there
   await assert.rejects(inst.moveGame('mover', other), /already a game folder/);
   assert.ok(fs.existsSync(path.join(gdir, 'TestGame.exe')), 'old copy kept when the move fails');
