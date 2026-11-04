@@ -106,3 +106,16 @@ details.git{margin-top:6px;font-size:13px}details.git summary{cursor:pointer;col
 .news img{width:220px;object-fit:cover;flex-shrink:0}
 .news.big{border-color:#3d7dff66}
 .news-body{padding:14px 16px}.news-body h3{margin:2px 0 6px}.news-body p{margin:0;color:var(--dim)}
+/* ---- game pages ---- */
+h3.section{margin-top:6px}h2.all-games{margin:30px 0 6px;font-size:20px}
+.countdown{font-weight:700;color:#8fb3ff}
+.gallery{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;margin-bottom:18px}
+.gallery img{height:130px;border-radius:10px;cursor:zoom-in;border:1px solid var(--line);flex-shrink:0}
+.lightbox{position:fixed;inset:0;background:#000d;display:grid;place-items:center;z-index:20}
+.lightbox img{max-width:86vw;max-height:84vh;border-radius:10px}
+.lb-btn{all:unset;position:fixed;cursor:pointer;color:#fff;font-size:44px;width:60px;height:60px;display:grid;place-items:center;border-radius:50%;background:#ffffff1a}
+.lb-btn:hover{background:#ffffff33}.lb-prev{left:24px;top:calc(50% - 30px)}.lb-next{right:24px;top:calc(50% - 30px)}.lb-close{right:24px;top:24px;font-size:34px}
+.lb-count{position:fixed;bottom:22px;color:#fff;font-size:14px}
+.extras{margin-bottom:18px}
+details.launch summary,details.gameinfo summary{cursor:pointer;font-weight:600}
+details.gameinfo{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}details.gameinfo .form{margin-top:10px}

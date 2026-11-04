@@ -587,3 +587,45 @@ test('news: signed with the list, bad news refused', () => {
   const bytes = fs.readFileSync(ch.file);
   assert.equal(verifyAndParse(bytes, fs.readFileSync(ch.file + '.sig', 'utf8'), keys.publicKey).news.length, 1);
 });
+
+test('game pages: screenshots, trailer, coming soon, launch options, shortcut plan', async () => {
+  const { splitArgs } = require('../core/installer');
+  assert.deepEqual(splitArgs('--fullscreen --level 2'), ['--fullscreen', '--level', '2']);
+  assert.deepEqual(splitArgs('--name "Big Map" \'x y\' ""'), ['--name', 'Big Map', 'x y', '']);
+  assert.deepEqual(splitArgs('a & del *'), ['a', '&', 'del', '*'], 'no shell meaning, just words');
+  assert.throws(() => splitArgs('"open'), /not closed/);
+  const keys = generateKeyPair();
+  const ch = new Channel(tmp(), keys.privateKey);
+  ch.upsertGame({ id: 'soon-game', name: 'Soon', kind: 'pc' });
+  assert.ok(ch.read().games[0].addedAt);
+  assert.throws(() => ch.setGameInfo('soon-game', { screenshots: ['http://x.test/a.png'] }), /https/);
+  assert.throws(() => ch.setGameInfo('soon-game', { trailer: 'https://evil.test/watch' }), /YouTube/);
+  assert.throws(() => ch.setGameInfo('soon-game', { comingSoon: 'next week' }), /coming soon date/);
+  const future = new Date(Date.now() + 3 * 86400000).toISOString();
+  ch.setGameInfo('soon-game', { screenshots: ['https://x.test/a.png', 'https://x.test/b.png'], trailer: 'https://youtu.be/abc', comingSoon: future });
+  const cat = ch.read();
+  // no versions yet, but coming soon: players can see it (without anything to install)
+  const view = playerView(cat, { role: 'user' });
+  assert.equal(view.games.length, 1);
+  assert.equal(view.games[0].releases.length, 0);
+  ch.setGameInfo('soon-game', { comingSoon: '' });
+  assert.equal(playerView(ch.read(), { role: 'user' }).games.length, 0);
+  // launch options saved per installed game
+  const dir = tmp();
+  const inst = new Installer(path.join(dir, 'lib'));
+  assert.throws(() => inst.setLaunchArgs('nope', 'x'), /not installed/);
+  inst._save({ g1: { version: '1', exe: 'a.exe', dir } });
+  assert.equal(inst.setLaunchArgs('g1', '  --big\n--x  '), '--big --x');
+  assert.equal(inst.installed().g1.launchArgs, '--big --x');
+  inst.setLaunchArgs('g1', '');
+  assert.equal(inst.installed().g1.launchArgs, undefined);
+  // desktop shortcut
+  const { shortcutPlan, playArg, safeFileName } = require('../core/shortcut');
+  const p = shortcutPlan({ gameId: 'railrove', name: 'Rail:rove?', desktop: 'C:\\Users\\z\\Desktop', execPath: 'C:\\ZL\\Zero Launcher.exe', isPackaged: true });
+  assert.match(p.file, /Railrove\.lnk$/);
+  assert.equal(p.options.args, '--play=railrove');
+  assert.throws(() => shortcutPlan({ gameId: '../x', name: 'x', desktop: '/d', execPath: '/e' }), /Bad game id/);
+  assert.equal(playArg(['x', '--play=railrove']), 'railrove');
+  assert.equal(playArg(['--play=../../evil']), null);
+  assert.equal(safeFileName('..'), 'Game');
+});

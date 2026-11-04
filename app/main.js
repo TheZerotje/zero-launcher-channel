@@ -20,6 +20,8 @@ const weekly = require('../core/weekly');
 const { DownloadQueue } = require('../core/queue');
 const strings = require('./renderer/strings');
 const godot = require('../core/godot');
+const { shortcutPlan, playArg } = require('../core/shortcut');
+const { isTrailer } = require('../core/catalogue');
 const crypto = require('crypto');
 
 const DEFAULTS = {
@@ -151,6 +153,9 @@ function state() {
     games: view.games.map((g) => ({
       id: g.id, name: g.name, kind: g.kind, url: g.url, description: g.description, image: g.image, owner: g.owner,
       phoneFriendly: g.phoneFriendly, hidden: g.hidden,
+      screenshots: g.screenshots || [], hasTrailer: !!g.trailer, comingSoon: g.comingSoon || null, addedAt: g.addedAt || null,
+      updatedAt: (() => { const c = currentRelease(g, v); return c ? c.releasedAt || c.testingAt || c.addedAt || null : null; })(),
+      trailer: d ? g.trailer || '' : undefined,
       current: currentRelease(g, v), releases: d ? g.releases : undefined,
       installed: inst[g.id] || null, updateReady: updates.includes(g.id),
       running: installer.isRunning(g.id), job: publicJob(queue.get(g.id)),
@@ -254,6 +259,21 @@ const api = {
     send('state', state()); return true;
   },
   openArcade: () => { openWebGame(state().siteUrl); return true; },
+  // The trailer address comes from the signed list, never from the screen.
+  openTrailer: (id) => {
+    const g = catalogue && catalogue.games.find((x) => x.id === id);
+    if (!g || !isTrailer(g.trailer || '')) throw new Error('No trailer');
+    shell.openExternal(g.trailer); return true;
+  },
+  makeShortcut: (id) => {
+    if (process.platform !== 'win32') throw new Error('Desktop shortcuts work on Windows only');
+    const g = catalogue && catalogue.games.find((x) => x.id === id);
+    if (!g) throw new Error('Game not found');
+    const plan = shortcutPlan({ gameId: id, name: g.name || id, desktop: app.getPath('desktop'), execPath: process.execPath, appPath: app.getAppPath(), isPackaged: app.isPackaged });
+    if (!shell.writeShortcutLink(plan.file, 'create', plan.options)) throw new Error('Could not make the shortcut');
+    return plan.file;
+  },
+  setLaunchArgs: (id, text) => { const r = installer.setLaunchArgs(id, text); send('state', state()); return r; },
   setSetting: (k, v) => {
     const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'] };
     if (!ok[k]) throw new Error('Not allowed');
@@ -322,6 +342,10 @@ const api = {
     devChannel().goBack(id); return refresh();
   },
   devHide: (id, hidden) => { devChannel().setHidden(id, hidden); return refresh(); },
+  devSetGameInfo: (id, o) => {
+    devChannel().setGameInfo(id, { screenshots: o.screenshots, trailer: o.trailer, comingSoon: o.comingSoon, description: o.description, image: o.image });
+    return refresh();
+  },
   devAddNews: (n) => { devChannel().addNews({ title: n.title, text: n.text || '', image: n.image || '' }); return refresh(); },
   devRemoveNews: (id) => { devChannel().removeNews(id); return refresh(); },
   devSetTester: (o) => { devChannel().setTester({ accountId: o.accountId, name: o.name, games: o.games || [] }); return refresh(); },
@@ -435,6 +459,16 @@ const CHECKS = {
   },
   devAddVersion: ([o]) => { V.obj(o); V.gameId(o.gameId); V.dir(o.buildDir, 'build folder'); V.version(o.version); V.optStr(o.notes, "what's new", 300); },
   devHide: ([id, hidden]) => { V.gameId(id); V.bool(hidden); },
+  openTrailer: gid, makeShortcut: gid,
+  setLaunchArgs: ([id, text]) => { V.gameId(id); V.str(text, 'launch options', 300); },
+  devSetGameInfo: ([id, o]) => {
+    V.gameId(id); V.obj(o, 'game info');
+    if (o.screenshots !== undefined) V.list(o.screenshots, 'screenshots', 12).forEach((u) => V.url(u, 'screenshot', { optional: false, httpsOnly: true }));
+    if (o.trailer !== undefined) V.url(o.trailer, 'trailer', { httpsOnly: true });
+    if (o.comingSoon !== undefined && o.comingSoon !== '') V.match(o.comingSoon, /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?)?$/, 'coming soon date');
+    if (o.description !== undefined) V.str(o.description, 'short text', 500);
+    if (o.image !== undefined) V.url(o.image, 'picture address', { httpsOnly: true });
+  },
   devAddNews: ([n]) => { V.obj(n, 'news'); V.str(n.title, 'title', 80, { allowEmpty: false }); V.optStr(n.text, 'text', 600); V.url(n.image, 'picture address', { httpsOnly: true }); },
   devRemoveNews: ([id]) => V.match(id, /^n[0-9a-z]{4,24}$/, 'news id'),
   devSetTester: ([o]) => { V.obj(o); V.str(o.accountId, 'account ID', 20); V.optStr(o.name, 'name', 32); V.list(o.games || [], 'games').forEach(V.gameId); },
@@ -499,7 +533,13 @@ function lockDownSession(ses) {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => { if (win) { win.show(); win.focus(); } });
+  // A desktop shortcut starts the launcher with --play=<game>.
+  const playFromArgs = (argv) => {
+    const id = playArg(argv);
+    if (!id || !catalogue) return;
+    try { api.play(id); } catch (e) { send('toast', { kind: 'error', text: e.message }); }
+  };
+  app.on('second-instance', (_e, argv) => { if (win) { win.show(); win.focus(); } playFromArgs(argv); });
   app.whenReady().then(async () => {
     const { session } = require('electron');
     for (const part of ['persist:arcade', 'persist:chatgpt']) lockDownSession(session.fromPartition(part));
@@ -521,6 +561,7 @@ else {
     setInterval(refresh, CHECK_EVERY_MS);
     checkWeekNotice();
     setInterval(checkWeekNotice, 60 * 1000);
+    playFromArgs(process.argv);
   });
   app.on('window-all-closed', () => { if (!developer()) app.quit(); });
 }

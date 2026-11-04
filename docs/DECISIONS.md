@@ -84,3 +84,14 @@ Zero was asleep. When something was unclear I picked the safest simple option an
 29. **News** lives in the signed game list (`news: [{id, title, text, date, image?}]`), max 50 items.
     Title max 80 letters, text max 600. A picture must be an https address (checked when Zero saves and again when
     players load the list). Zero can also remove news.
+30. **Game page info** (screenshots, trailer, coming soon date) is in the signed list. Screenshots: up to 12 https
+    addresses. Trailer: only YouTube https addresses, and the launcher opens the address from the signed list (the
+    screen can't send its own address). Zero edits this in Publish > "Game page" per game.
+31. **Store sections**: "New" = game added in the last 30 days (games get an `addedAt` date when Zero adds them;
+    older games have none, so they are not "New"). "Recently updated" = its newest version for you is from the
+    last 14 days. "Coming soon" = has a coming soon date and nothing to install yet; it shows a countdown and no
+    Install button. Sections only show when you are not searching or filtering.
+32. **Desktop shortcut** starts Zero Launcher with `--play=<game>`, so the game still starts the normal safe way
+    (only a valid game id is accepted). Windows only; on other systems you get a clear message.
+33. **Launch options** are saved per installed game (max 300 letters). They are split into words and given to the
+    game directly, without a shell, so they can never run other commands.

@@ -14,6 +14,13 @@ const { fetchBytes } = require('./net');
 const FORMAT = 1;
 const ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
 
+const isHttps = (u) => typeof u === 'string' && u.length <= 500 && /^https:\/\/[^\s"'<>()\\]+$/.test(u);
+// Trailer: only YouTube, only https (it opens in the normal browser).
+function isTrailer(u) {
+  if (!isHttps(u)) return false;
+  try { const h = new URL(u).hostname.toLowerCase(); return ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(h); } catch { return false; }
+}
+
 function emptyCatalogue(publisher) {
   return { format: FORMAT, publisher, updatedAt: new Date().toISOString(), games: [] };
 }
@@ -26,6 +33,9 @@ function validate(cat) {
     if (!ID_RE.test(g.id || '')) errors.push(`bad game id ${g.id}`);
     if (!['pc', 'web'].includes(g.kind)) errors.push(`${g.id}: bad kind`);
     if (g.kind === 'web' && !/^https?:\/\//.test(g.url || '')) errors.push(`${g.id}: web game needs url`);
+    if (g.screenshots !== undefined && (!Array.isArray(g.screenshots) || g.screenshots.length > 12 || !g.screenshots.every(isHttps))) errors.push(`${g.id}: screenshots must be up to 12 https addresses`);
+    if (g.trailer !== undefined && g.trailer !== '' && !isTrailer(g.trailer)) errors.push(`${g.id}: trailer must be a YouTube https address`);
+    if (g.comingSoon !== undefined && g.comingSoon !== '' && Number.isNaN(Date.parse(g.comingSoon))) errors.push(`${g.id}: bad coming soon date`);
     for (const r of g.releases || []) {
       if (!versions.isValid(r.version)) errors.push(`${g.id}: bad version ${r.version}`);
       if (!['unreleased', 'testing', 'released', 'pulled'].includes(r.state)) errors.push(`${g.id} ${r.version}: bad state`);
@@ -78,7 +88,7 @@ function playerView(cat, viewer) {
     games: cat.games
       .filter((g) => dev || !g.hidden)
       .map((g) => ({ ...g, releases: (g.releases || []).filter((r) => (dev && r.state === 'pulled') || statesFor(g, viewer).includes(r.state)) }))
-      .filter((g) => g.kind === 'web' || g.releases.length > 0),
+      .filter((g) => g.kind === 'web' || g.releases.length > 0 || (g.comingSoon && Date.parse(g.comingSoon) > Date.now() - 86400000)),
   };
 }
 
@@ -151,4 +161,4 @@ function resolveFileUrl(source, fileUrl) {
   return path.join(source, fileUrl);
 }
 
-module.exports = { statesFor, FORMAT, ID_RE, emptyCatalogue, validate, currentRelease, playerView, loadChannel, loadChannelCached, verifyAndParse, retryDelay, resolveFileUrl };
+module.exports = { isHttps, isTrailer, statesFor, FORMAT, ID_RE, emptyCatalogue, validate, currentRelease, playerView, loadChannel, loadChannelCached, verifyAndParse, retryDelay, resolveFileUrl };

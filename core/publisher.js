@@ -45,12 +45,25 @@ class Channel {
     if (!ID_RE.test(id)) throw new Error('Game id: small letters, numbers and - only (example: railrove)');
     const cat = this.read();
     let g = cat.games.find((x) => x.id === id);
-    if (!g) { g = { id, kind, releases: [] }; cat.games.push(g); }
+    if (!g) { g = { id, kind, releases: [], addedAt: new Date().toISOString() }; cat.games.push(g); }
     if (g.kind !== kind) throw new Error(`"${id}" is already a ${g.kind} game`);
     Object.assign(g, { name, description, image, owner });
     if (kind === 'web') g.url = url;
     if (phoneFriendly !== undefined) g.phoneFriendly = !!phoneFriendly;
     return this._write(cat);
+  }
+
+  // Game page info: screenshots (https), trailer (YouTube), coming soon date, text, picture.
+  setGameInfo(gameId, { screenshots, trailer, comingSoon, description, image } = {}) {
+    const cat = this.read();
+    const g = this._game(cat, gameId);
+    if (screenshots !== undefined) g.screenshots = screenshots.map((s) => String(s).trim()).filter(Boolean);
+    if (trailer !== undefined) { if (trailer) g.trailer = String(trailer).trim(); else delete g.trailer; }
+    if (comingSoon !== undefined) { if (comingSoon) g.comingSoon = String(comingSoon); else delete g.comingSoon; }
+    if (description !== undefined) g.description = String(description);
+    if (image !== undefined) g.image = String(image);
+    this._write(cat); // validate() refuses bad addresses
+    return g;
   }
 
   // Pack a build folder as a new UNRELEASED version.

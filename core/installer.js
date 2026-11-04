@@ -15,6 +15,20 @@ const { unpack } = require('./zip');
 const { resolveFileUrl, ID_RE } = require('./catalogue');
 const { writeJsonAtomic } = require('./fsutil');
 
+// Split "a b \"c d\"" into ['a', 'b', 'c d'].
+function splitArgs(text) {
+  const out = []; let cur = ''; let q = null; let any = false;
+  for (const ch of String(text || '')) {
+    if (q) { if (ch === q) q = null; else cur += ch; continue; }
+    if (ch === '"' || ch === "'") { q = ch; any = true; continue; }
+    if (/\s/.test(ch)) { if (cur || any) { out.push(cur); cur = ''; any = false; } continue; }
+    cur += ch;
+  }
+  if (q) throw new Error('Launch options: a quote " is not closed');
+  if (cur || any) out.push(cur);
+  return out;
+}
+
 class Installer {
   constructor(root) {
     this.root = root;
@@ -132,18 +146,33 @@ class Installer {
     this._save(state);
   }
 
+  // Launch options: extra start words for the game (example: --fullscreen --level 2).
+  setLaunchArgs(gameId, text) {
+    if (!ID_RE.test(gameId)) throw new Error('Bad game id');
+    const st = this.installed();
+    if (!st[gameId]) throw new Error('Game is not installed');
+    const clean = String(text || '').replace(/[\r\n\0]/g, ' ').trim().slice(0, 300);
+    splitArgs(clean); // throws on a broken quote
+    if (clean) st[gameId].launchArgs = clean; else delete st[gameId].launchArgs;
+    this._save(st);
+    return clean;
+  }
+
+  // onExit(code, error, msRunning)
   play(gameId, onExit) {
     const info = this.installed()[gameId];
     if (!info) throw new Error('Game is not installed');
     if (this.running.has(gameId)) return this.running.get(gameId).pid;
     const exe = path.resolve(info.dir, info.exe);
     if (!exe.startsWith(path.resolve(info.dir) + path.sep)) throw new Error('Bad game file');
-    const child = spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore' });
+    // No shell: the words go straight to the game, they can never run other commands.
+    const startedAt = Date.now();
+    const child = spawn(exe, splitArgs(info.launchArgs || ''), { cwd: path.dirname(exe), detached: true, stdio: 'ignore', shell: false });
     this.running.set(gameId, child);
     const st = this.installed();
     if (st[gameId]) { st[gameId].lastPlayed = new Date().toISOString(); this._save(st); }
-    child.on('exit', (code) => { this.running.delete(gameId); onExit && onExit(code); });
-    child.on('error', (err) => { this.running.delete(gameId); onExit && onExit(-1, err); });
+    child.on('exit', (code) => { this.running.delete(gameId); onExit && onExit(code, null, Date.now() - startedAt); });
+    child.on('error', (err) => { this.running.delete(gameId); onExit && onExit(-1, err, Date.now() - startedAt); });
     child.unref();
     return child.pid;
   }
@@ -151,4 +180,4 @@ class Installer {
   isRunning(gameId) { return this.running.has(gameId); }
 }
 
-module.exports = { Installer };
+module.exports = { Installer, splitArgs };

@@ -99,7 +99,18 @@ function jobLine(g) {
         j.stage === 'paused' ? h('button', { class: 'btn small', onclick: () => call('resume', g.id) }, t('Resume')) : null,
         ['download', 'waiting', 'paused'].includes(j.stage) ? h('button', { class: 'ghost small', onclick: () => call('cancel', g.id) }, t('Cancel')) : null)));
 }
+const DAY = 86400000;
+const isComingSoon = (g) => !!g.comingSoon && !g.current && g.kind === 'pc';
+function countdown(date) {
+  const ms = Date.parse(date) - Date.now();
+  if (ms <= 0) return t('Any moment now');
+  const d = Math.floor(ms / DAY), hrs = Math.floor((ms % DAY) / 3600000);
+  if (d === 0) return t('In {h} hours', { h: Math.max(1, hrs) });
+  if (d === 1) return t('Tomorrow');
+  return t('In {d} days', { d });
+}
 function actions(g) {
+  if (isComingSoon(g)) return h('div', { class: 'row' }, h('button', { class: 'btn big', disabled: true }, t('Coming soon')), h('span', { class: 'countdown' }, countdown(g.comingSoon)));
   if (g.kind === 'web') return h('div', { class: 'row' }, h('button', { class: 'btn big', onclick: () => call('play', g.id) }, t('Play')));
   if (g.job) return jobLine(g);
   if (!g.installed) {
@@ -141,6 +152,38 @@ function newsBlock() {
     showOldNews ? list.slice(1).map((n) => newsCard(n, false)) : null);
 }
 
+// ---------------- picture gallery ----------------
+let bigPic = null; // { gameId, i }
+function gallery(g) {
+  const pics = (g.screenshots || []).map(safeImg).filter(Boolean);
+  if (!pics.length) return null;
+  return h('div', { class: 'gallery' }, pics.map((u, i) => h('img', { src: u, alt: t('Picture {n}', { n: i + 1 }), loading: 'lazy', tabindex: 0,
+    onclick: () => openPic(g.id, i), onkeydown: (e) => { if (e.key === 'Enter') openPic(g.id, i); } })));
+}
+function openPic(id, i) { bigPic = { gameId: id, i }; showPic(); }
+function showPic() {
+  document.querySelector('.lightbox')?.remove();
+  if (!bigPic) return;
+  const g = S.games.find((x) => x.id === bigPic.gameId);
+  const pics = ((g && g.screenshots) || []).map(safeImg).filter(Boolean);
+  if (!pics.length) { bigPic = null; return; }
+  bigPic.i = (bigPic.i + pics.length) % pics.length;
+  const step = (d) => { bigPic.i += d; showPic(); };
+  const box = h('div', { class: 'lightbox', role: 'dialog', 'aria-label': t('Big picture'), onclick: (e) => { if (e.target === box) { bigPic = null; showPic(); } } },
+    h('button', { class: 'lb-btn lb-prev', 'aria-label': t('Previous picture'), onclick: () => step(-1) }, '‹'),
+    h('img', { src: pics[bigPic.i], alt: '' }),
+    h('button', { class: 'lb-btn lb-next', 'aria-label': t('Next picture'), onclick: () => step(1) }, '›'),
+    h('button', { class: 'lb-btn lb-close', 'aria-label': t('Close'), onclick: () => { bigPic = null; showPic(); } }, '×'),
+    h('div', { class: 'lb-count' }, `${bigPic.i + 1} / ${pics.length}`));
+  document.body.append(box);
+}
+document.addEventListener('keydown', (e) => {
+  if (!bigPic) return;
+  if (e.key === 'ArrowRight') { bigPic.i++; showPic(); }
+  else if (e.key === 'ArrowLeft') { bigPic.i--; showPic(); }
+  else if (e.key === 'Escape') { bigPic = null; showPic(); }
+});
+
 // ---------------- pages ----------------
 const P = {};
 P.store = () => {
@@ -148,6 +191,13 @@ P.store = () => {
   const list = S.games.filter((g) => matches(g, storeFilter.q) && (storeFilter.kind === 'all'
     || (storeFilter.kind === 'installed' ? !!g.installed : g.kind === storeFilter.kind)));
   const web = list.filter((g) => g.kind === 'web'), pc = list.filter((g) => g.kind === 'pc');
+  const now = Date.now();
+  const recent = (iso, days) => iso && now - Date.parse(iso) < days * DAY;
+  const browsing = !storeFilter.q && storeFilter.kind === 'all';
+  const fresh = browsing ? S.games.filter((g) => recent(g.addedAt, 30) && !isComingSoon(g)) : [];
+  const updated = browsing ? S.games.filter((g) => !fresh.includes(g) && g.kind === 'pc' && recent(g.updatedAt, 14)) : [];
+  const soon = browsing ? S.games.filter(isComingSoon).sort((a, b) => a.comingSoon.localeCompare(b.comingSoon)) : [];
+  const section = (title, games, cls) => (games.length ? [h('h3', { class: 'section ' + cls }, title), h('div', { class: 'grid' }, games.map(card))] : null);
   return [
     h('h1', {}, t('Store')), h('p', { class: 'sub' }, t("All of Zero's games. Website games play right away, PC games install.")),
     h('div', { class: 'hero' }, h('div', {}, h('h2', {}, t("Zero's Arcade")), h('div', { class: 'dim' }, t('Every website game, inside the launcher.'))),
@@ -157,7 +207,11 @@ P.store = () => {
     newsBlock(),
     h('div', { class: 'row tools' }, searchBox('store-q', storeFilter.q, t('Find a game…'), (v) => { storeFilter.q = v; }),
       h('div', { class: 'row chips' }, kinds.map(([k, l]) => h('button', { class: 'chip' + (storeFilter.kind === k ? ' on' : ''), onclick: () => { storeFilter.kind = k; render(); } }, l)))),
-    pc.length ? [h('h3', {}, t('PC games')), h('div', { class: 'grid' }, pc.map(card))] : null,
+    section(t('New'), fresh, 's-new'),
+    section(t('Recently updated'), updated, 's-updated'),
+    section(t('Coming soon'), soon, 's-soon'),
+    browsing && (fresh.length || updated.length || soon.length) ? h('h2', { class: 'all-games' }, t('All games')) : null,
+    pc.filter((g) => !isComingSoon(g)).length ? [h('h3', {}, t('PC games')), h('div', { class: 'grid' }, pc.filter((g) => !isComingSoon(g)).map(card))] : null,
     web.length ? [h('h3', { style: 'margin-top:26px' }, t('Website games')), h('div', { class: 'grid' }, web.map(card))] : null,
     !S.games.length && !S.error ? h('div', { class: 'empty' }, t('No games yet. Check back soon!')) : null,
     S.games.length && !list.length ? h('div', { class: 'empty' }, t('No game found. Try another word.')) : null,
@@ -198,7 +252,15 @@ P.game = () => {
       h('h1', {}, g.name), h('p', { class: 'sub' }, g.description || ''),
       rel ? h('p', { class: 'dim' }, t('Version {v}', { v: rel.version })) : null,
       actions(g))),
+    gallery(g),
     rel && rel.notes ? h('div', { class: 'panel' }, h('h3', {}, t("What's new")), h('p', {}, rel.notes)) : null,
+    h('div', { class: 'row extras' },
+      g.hasTrailer ? h('button', { class: 'ghost', onclick: () => call('openTrailer', g.id) }, '▶ ' + t('Watch trailer')) : null,
+      g.kind === 'pc' && g.installed ? h('button', { class: 'ghost', onclick: () => call('makeShortcut', g.id).then(() => toast(t('Shortcut made on your desktop'))) }, t('Make desktop shortcut')) : null),
+    g.kind === 'pc' && g.installed ? h('details', { class: 'panel launch' }, h('summary', {}, t('Launch options')),
+      h('p', { class: 'dim' }, t('Extra start words for this game. Only change this if Zero tells you to.')),
+      h('div', { class: 'row' }, h('input', { id: 'launch-args', value: g.installed.launchArgs || '', maxlength: 300, placeholder: '--fullscreen', style: 'flex:1' }),
+        h('button', { class: 'btn small', onclick: async () => { await call('setLaunchArgs', g.id, $('#launch-args').value); toast(t('Saved')); } }, t('Save')))) : null,
     g.kind === 'pc' && g.installed ? h('div', { class: 'panel' }, h('h3', {}, t('Fix the game')),
       h('p', { class: 'dim' }, t('Game not starting or looks broken? Repair downloads it again and checks every file.')),
       h('div', { class: 'row' }, h('button', { class: 'ghost', disabled: !!g.job || g.running, onclick: () => call('repair', g.id).then(() => toast(t('Repair started'))) }, t('Repair')),
@@ -334,6 +396,19 @@ P['dev-week'] = () => {
     h('div', { class: 'panel' }, h('h3', {}, 'To do'), list(W.todos, 'todos')),
     weekData.history.length ? h('div', { class: 'panel' }, h('h3', {}, 'Earlier weeks'), weekData.history.map((x) => h('div', { class: 'row', style: 'justify-content:space-between;padding:4px 0' }, h('span', {}, 'Week of ' + x.key), h('span', { class: 'dim' }, `${x.done} of ${x.total} done`)))) : null];
 };
+function gameInfoBox(g) {
+  const id = 'gi-' + g.id;
+  return h('details', { class: 'gameinfo' }, h('summary', {}, 'Game page: pictures, trailer, coming soon'),
+    h('div', { class: 'form' },
+      h('label', {}, 'Trailer (YouTube address)', h('input', { id: id + '-tr', value: g.trailer || '', placeholder: 'https://www.youtube.com/watch?v=…' })),
+      h('label', {}, 'Coming soon date (empty = not coming soon)', h('input', { id: id + '-cs', type: 'date', value: g.comingSoon ? g.comingSoon.slice(0, 10) : '' }))),
+    h('label', {}, 'Screenshots: one https picture address per line (max 12)', h('textarea', { id: id + '-ss' }, (g.screenshots || []).join('\n'))),
+    h('button', { class: 'ghost small', style: 'margin-top:8px', onclick: async () => {
+      const screenshots = $('#' + id + '-ss').value.split('\n').map((x) => x.trim()).filter(Boolean);
+      set(await call('devSetGameInfo', g.id, { screenshots, trailer: $('#' + id + '-tr').value.trim(), comingSoon: $('#' + id + '-cs').value }));
+      toast('Game page saved. Press Upload now to send it to players.');
+    } }, 'Save game page'));
+}
 P['dev-publish'] = () => {
   const pc = S.games.filter((g) => g.kind === 'pc');
   if (!godotList) { godotList = []; call('devGodotProjects').then((r) => { godotList = r; render(); }).catch(() => {}); }
@@ -386,7 +461,10 @@ P['dev-publish'] = () => {
         await call('devAddVersion', { gameId: g.id, buildDir: dir, version: $('#v-' + g.id).value.trim(), notes: $('#n-' + g.id).value.trim() });
         toast('Added as Unreleased'); set(await call('state'));
       } }, 'Pick build folder & add version'),
-      godotBox(g))),
+      godotBox(g),
+      gameInfoBox(g))),
+    S.games.filter((g) => g.kind === 'web').length ? h('div', { class: 'panel' }, h('h3', {}, 'Website games: game page'),
+      S.games.filter((g) => g.kind === 'web').map((g) => h('div', { style: 'margin-bottom:10px' }, h('b', {}, g.name), gameInfoBox(g)))) : null,
     h('div', { class: 'panel' }, h('h3', {}, 'Write news'),
       h('p', { class: 'dim' }, 'Shows at the top of the Store for players after you press Upload now.'),
       h('div', { class: 'form' },
