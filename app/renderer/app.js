@@ -184,6 +184,21 @@ function feedbackBox(g) {
     } }, t('Send feedback'))));
 }
 let crashText = {}; // gameId -> preview text
+// A new launcher version (from the signed game list). One big button; nothing runs without a yes.
+let launcherDl = null; // { done, total } while downloading
+function launcherBanner() {
+  const u = S.launcherUpdate;
+  if (!u || gameId || !['store', 'library', 'settings'].includes(page)) return null;
+  const pct = launcherDl && launcherDl.total ? Math.round((launcherDl.done / launcherDl.total) * 100) : 0;
+  return h('div', { class: 'panel launcher-update' }, h('h3', {}, t('A new Zero Launcher is ready: version {v}', { v: u.version })),
+    u.notes ? h('p', {}, u.notes) : null,
+    !u.released ? h('p', { class: 'dim' }, 'Only you see this: it is not sent to players yet.') : null,
+    launcherDl ? h('div', {}, h('div', { class: 'bar' }, h('i', { style: `width:${pct}%` })), h('p', { class: 'dim' }, t('Downloading the new launcher') + ` ${pct}%`))
+      : h('button', { class: 'btn big', onclick: async () => {
+        launcherDl = { done: 0, total: u.size }; render();
+        try { await call('launcherUpdate'); } catch {} finally { launcherDl = null; render(); }
+      } }, t('Update the launcher')));
+}
 function crashBanner() {
   const list = (S.crashes || []);
   if (!list.length) return null;
@@ -727,6 +742,11 @@ P['dev-publish'] = () => {
       } }, 'Add news')),
       (S.news || []).length ? h('table', { style: 'margin-top:12px' }, (S.news || []).map((n) => h('tr', {}, h('td', { class: 'dim' }, new Date(n.date).toLocaleDateString()), h('td', {}, n.title),
         h('td', {}, h('button', { class: 'ghost small', onclick: () => call('devRemoveNews', n.id).then(set) }, 'Remove'))))) : null),
+    h('div', { class: 'panel launcher-channel' }, h('h3', {}, 'Launcher update'),
+      h('p', { class: 'dim' }, `This launcher: ${S.launcherVersion}. In your channel: ${S.launcherChannel ? `${S.launcherChannel.version} (${S.launcherChannel.released ? 'sent to players' : 'not sent to players yet'})` : 'none'}.`),
+      h('p', { class: 'dim' }, 'Run "npm run dist", then add dist/ZeroLauncherSetup-<version>.exe here. Players see it after Send to players AND Upload now. The file is checked (SHA-256) on their PC before it can start.'),
+      h('div', { class: 'row' }, h('button', { class: 'ghost', onclick: async () => { const r = await call('devLauncherAdd').catch(() => null); if (r) { set(r); toast('Launcher added. Not sent to players yet.'); } } }, 'Add launcher setup'),
+        S.launcherChannel && !S.launcherChannel.released ? h('button', { class: 'btn', onclick: async () => set(await call('devLauncherRelease')) }, 'Send to players') : null)),
     h('div', { class: 'panel' }, h('h3', {}, 'Add a game'),
       h('div', { class: 'form' },
         h('label', {}, 'Game id', h('input', { id: 'ng-id', placeholder: 'railrove' })),
@@ -881,7 +901,7 @@ function render() {
   renderNav();
   const keepScroll = $('#main').scrollTop;
   const m = $('#main'); m.innerHTML = '';
-  m.append(...[crashBanner(), gameId ? P.game() : P[page]()].flat(3).filter(Boolean));
+  m.append(...[crashBanner(), launcherBanner(), gameId ? P.game() : P[page]()].flat(3).filter(Boolean));
   m.scrollTop = keepScroll;
   const log = $('#ai-log'); if (log) log.scrollTop = log.scrollHeight;
 }
@@ -890,6 +910,7 @@ function set(s) { if (s && s.games) { S = s; render(); } }
 window.zl.on('state', (s) => { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); S = s; if (typing) renderNav(); else render(); });
 window.zl.on('toast', (m) => toast(m.name ? `${m.name}: ${t(m.text, m.vars)}` : t(m.text, m.vars), m.kind));
 window.zl.on('progress', (m) => {
+  if (m.kind === 'launcher') { launcherDl = { done: m.done, total: m.total }; const b = $('.launcher-update .bar i'); if (b) b.style.width = `${m.total ? Math.round((m.done / m.total) * 100) : 0}%`; }
   if (m.kind === 'upload') { upload = { text: m.text, done: m.done, total: m.total }; if (page === 'dev-publish') render(); }
   if (m.kind === 'godot') {
     (godotLog[m.gameId] = godotLog[m.gameId] || []).push(m.text);

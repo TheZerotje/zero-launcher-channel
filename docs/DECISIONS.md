@@ -190,3 +190,10 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     or a friend host. Loading: safe unpack (no ../), only known file names, JSON must parse, settings go through the
     Settings allowed list, the install folder of this PC is kept, a confirm box first, and a copy of the old data is
     saved in backups/ just in case.
+63. **Launcher self-update** rides on the signed game list: `launcher: { version, released, file: { url, size, sha256 } }`.
+    The file name must be `packages/launcher/ZeroLauncherSetup-<version>.exe` (no other paths, no outside links).
+    Zero adds the setup on Publish; only Zero sees it until he presses "Send to players" (confirm box) AND Upload
+    now. Players get it only when it is NEWER (never back). The download is SHA-256 checked before it can start;
+    a bad file is removed. The player presses one big button and says yes; then the setup opens and the launcher
+    closes. The AI never added a setup or uploaded anything. Note: Windows SmartScreen still warns until the
+    setup is code-signed (Zero's call, see the morning report).

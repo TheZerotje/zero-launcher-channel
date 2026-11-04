@@ -208,3 +208,67 @@ test('back up my launcher data: save, change things, load it back (only after ye
     assert.deepEqual(errors, []);
   } finally { await close(app); }
 });
+
+test('launcher update: Zero adds the setup, only Zero sees it first; after Send to players a player gets one big button; checked, then a yes', async () => {
+  const { mockDialogs } = require('./helpers');
+  const demo = makeDemo();
+  const exe = path.join(demo.dir, 'ZeroLauncherSetup-9.9.9.exe'); fs.writeFileSync(exe, 'MZ fake launcher setup');
+  let { app, win, errors } = await launch(demo.dev);
+  try {
+    await mockDialogs(app, { file: exe });
+    await goto(win, 'Publish');
+    const panel = win.locator('.panel.launcher-channel');
+    await panel.locator('button', { hasText: 'Add launcher setup' }).click();
+    await win.locator('.toast', { hasText: 'Launcher added' }).waitFor();
+    assert.match(await panel.textContent(), /In your channel: 9\.9\.9 \(not sent to players yet\)/);
+    await shot(win, 'dev-launcher-update');
+    await goto(win, 'Store');
+    assert.match(await win.locator('.launcher-update').textContent(), /version 9\.9\.9.*Only you see this/);
+    assert.deepEqual(errors, []);
+  } finally { await close(app); }
+  // a player does not see it yet
+  ({ app, win } = await launch(demo.user));
+  try {
+    await win.locator('.card').first().waitFor();
+    assert.equal(await win.locator('.launcher-update').count(), 0, 'not before Send to players');
+    assert.match(await tryCall(win, 'launcherUpdate'), /No new launcher/);
+    for (const n of ['devLauncherAdd', 'devLauncherRelease']) assert.match(await tryCall(win, n), /Developer only/, n);
+    assert.match(await tryCall(win, 'launcherUpdate', 'C:/evil.exe'), /Bad input/);
+  } finally { await close(app); }
+  ({ app, win } = await launch(demo.dev));
+  try {
+    await mockDialogs(app);
+    await goto(win, 'Publish');
+    await win.locator('.panel.launcher-channel button', { hasText: 'Send to players' }).click();
+    await win.locator('.panel.launcher-channel', { hasText: '9.9.9 (sent to players)' }).waitFor();
+  } finally { await close(app); }
+  ({ app, win, errors } = await launch(demo.user));
+  try {
+    await app.evaluate(({ shell, app: a }) => { global.__opened = []; shell.openPath = async (p) => { global.__opened.push(p); return ''; }; a.quit = () => { global.__quit = true; }; });
+    const banner = win.locator('.launcher-update');
+    await banner.waitFor();
+    assert.match(await banner.textContent(), /A new Zero Launcher is ready: version 9\.9\.9/);
+    assert.doesNotMatch(await banner.textContent(), /Only you see this/);
+    await shot(win, 'player-launcher-update');
+    // "Later": nothing is started
+    await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+    await banner.locator('button', { hasText: 'Update the launcher' }).click();
+    await win.locator('.launcher-update button', { hasText: 'Update the launcher' }).waitFor();
+    assert.deepEqual(await app.evaluate(() => global.__opened), []);
+    // someone swaps the file in the channel: refused, never started
+    const chFile = path.join(demo.dir, 'channel', 'packages', 'launcher', 'ZeroLauncherSetup-9.9.9.exe');
+    fs.writeFileSync(chFile, 'MZ evil'); fs.rmSync(path.join(demo.user, 'updates'), { recursive: true, force: true });
+    await mockDialogs(app);
+    await win.locator('.launcher-update button', { hasText: 'Update the launcher' }).click();
+    await win.locator('.toast', { hasText: 'check failed' }).waitFor();
+    assert.deepEqual(await app.evaluate(() => global.__opened), []);
+    // the real file again: checked, yes -> the setup starts, the launcher closes
+    fs.writeFileSync(chFile, 'MZ fake launcher setup');
+    await win.locator('.launcher-update button', { hasText: 'Update the launcher' }).click();
+    await app.evaluate(() => new Promise((r) => { const t = setInterval(() => { if (global.__quit) { clearInterval(t); r(); } }, 50); }));
+    const opened = await app.evaluate(() => global.__opened);
+    assert.equal(opened.length, 1); assert.match(opened[0], /updates[\\/]ZeroLauncherSetup-9\.9\.9\.exe$/);
+    assert.match(fs.readFileSync(path.join(demo.user, 'logs', 'launcher.log'), 'utf8'), /launcher 9\.9\.9 downloaded and checked/);
+    assert.deepEqual(errors, []);
+  } finally { await close(app); }
+});

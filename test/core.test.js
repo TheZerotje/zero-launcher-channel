@@ -251,6 +251,12 @@ test('GitHub sync against a fake GitHub', async () => {
     r = await gh.sync(dir);
     assert.equal(r.uploaded, 0, 'zip not uploaded twice');
     assert.equal(assets.length, 3);
+    // a launcher setup in the channel is uploaded too (once)
+    const exe = path.join(tmp(), 'ZeroLauncherSetup-0.2.0.exe'); fs.writeFileSync(exe, 'MZ fake setup');
+    await ch.setLauncher(exe);
+    assert.equal((await gh.sync(dir)).uploaded, 1);
+    assert.ok(assets.some((a) => a.name === 'ZeroLauncherSetup-0.2.0.exe'));
+    assert.equal((await gh.sync(dir)).uploaded, 0);
   } finally { srv.close(); }
 });
 
@@ -1007,4 +1013,39 @@ test('launcher backup: settings, account, play time, reports; never keys, develo
   await assert.rejects(backup.read(slip, opts), /Unsafe file path|invalid relative path/);
   const empty = await backup.read(await mk([mark, ['developer.json', '{}'], ['account.json', '{"id":"nope"}'], ['playtime.json', 'not json'], ['feedback.json', '5'], ['reports/evil.exe', 'x']]), opts);
   assert.equal(empty.files.size, 0);
+});
+
+test('launcher self-update: signed list names the setup; players only after Send to players; newer only; checked before start', async () => {
+  const su = require('../core/selfupdate');
+  const { validate } = require('../core/catalogue');
+  const keys = generateKeyPair();
+  const dir = tmp(); const ch = new Channel(dir, keys.privateKey);
+  await assert.rejects(ch.setLauncher(path.join(tmp(), 'evil.exe')), /ZeroLauncherSetup/);
+  const exe = path.join(tmp(), 'ZeroLauncherSetup-0.2.0.exe'); fs.writeFileSync(exe, 'MZ fake setup 0.2.0');
+  const l = await ch.setLauncher(exe, 'Faster start');
+  assert.equal(l.version, '0.2.0'); assert.equal(l.released, false); assert.match(l.file.sha256, /^[a-f0-9]{64}$/);
+  let cat = await loadChannel(dir, keys.publicKey); // signature checked
+  assert.equal(su.available(cat, '0.1.0'), null, 'players: not before Send to players');
+  assert.equal(su.available(cat, '0.1.0', { developer: true }).version, '0.2.0', 'Zero sees it first');
+  ch.releaseLauncher();
+  cat = ch.read();
+  assert.equal(su.available(cat, '0.1.0').notes, 'Faster start');
+  assert.equal(su.available(cat, '0.2.0'), null, 'same version: nothing');
+  assert.equal(su.available(cat, '0.3.0'), null, 'never go back to an older launcher');
+  const old = path.join(tmp(), 'ZeroLauncherSetup-0.1.5.exe'); fs.writeFileSync(old, 'x');
+  await assert.rejects(ch.setLauncher(old), /already has a newer launcher/);
+  // bad entries are refused by the list check
+  for (const bad of [{ url: 'packages/launcher/../../evil.exe' }, { url: 'https://evil.example/ZeroLauncherSetup-9.exe' }, { sha256: 'abc' }, { size: -1 }]) {
+    assert.ok(validate({ ...cat, launcher: { ...cat.launcher, file: { ...cat.launcher.file, ...bad } } }).some((e) => /launcher/.test(e)), JSON.stringify(bad));
+  }
+  // download from the channel folder, checked
+  const out = tmp();
+  const f = await su.download(cat, '0.1.0', dir, out);
+  assert.equal(path.basename(f), 'ZeroLauncherSetup-0.2.0.exe'); assert.equal(fs.readFileSync(f, 'utf8'), 'MZ fake setup 0.2.0');
+  // someone swaps the file in the channel: refused and removed
+  fs.writeFileSync(path.join(dir, cat.launcher.file.url), 'MZ evil');
+  fs.rmSync(f);
+  await assert.rejects(su.download(cat, '0.1.0', dir, out), /check failed/);
+  assert.deepEqual(fs.readdirSync(out), [], 'nothing left that could be started');
+  await assert.rejects(su.download(cat, '0.2.0', dir, out), /No new launcher/);
 });

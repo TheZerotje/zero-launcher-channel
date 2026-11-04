@@ -70,6 +70,8 @@ class GitHubChannel {
         todo.push({ name, file: path.join(channelDir, r.file.url), size: r.file.size, existing });
       }
     }
+    const lf = cat.launcher && cat.launcher.file; // the launcher setup, if Zero added one
+    if (lf) { const name = lf.url.split('/').pop(); const existing = have.get(name); if (!(existing && existing.size === lf.size)) todo.push({ name, file: path.join(channelDir, lf.url), size: lf.size, existing }); }
     const total = todo.length + 2;
     let done = 0;
     for (const t of todo) {

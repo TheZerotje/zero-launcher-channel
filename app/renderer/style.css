@@ -174,3 +174,4 @@ label.check-inline{flex-direction:row;align-items:center;gap:8px;font-size:14px;
 .playtime .big-time{font-size:22px;font-weight:700;margin:4px 0 10px}
 .badges{gap:8px;flex-wrap:wrap}.badge-chip{font-size:13px;font-weight:700;padding:4px 10px;border-radius:999px;background:#f0a53022;color:#ffc56b;border:1px solid #f0a53055}
 .badge-chip.b-tester{background:#a66bff22;color:#c9a5ff;border-color:#a66bff55}
+.panel.launcher-update{border-color:#3d7dff88;background:#3d7dff14}

@@ -31,6 +31,7 @@ const playtime = require('../core/playtime');
 const feedback = require('../core/feedback');
 const { Log } = require('../core/log');
 const backup = require('../core/backup');
+const selfupdate = require('../core/selfupdate');
 const CHECK_ITEMS = ['starts', 'sound', 'tested', 'notes', 'picture'];
 const CHECK_LABELS = { starts: 'The game starts', sound: 'No sound bugs', tested: 'Tested by a tester', notes: "What's new is written", picture: 'Picture is set' };
 let stats = null;
@@ -268,6 +269,9 @@ function state() {
     testers: d && catalogue ? catalogue.testers || [] : undefined,
     uploadNeeded: d ? uploadNeeded() : undefined,
     hasDiscord: d ? !!d.discordWebhook : undefined,
+    launcherUpdate: catalogue ? selfupdate.available(catalogue, app.getVersion(), { developer: !!d }) : null,
+    launcherVersion: app.getVersion(),
+    launcherChannel: d && catalogue && catalogue.launcher ? { version: catalogue.launcher.version, released: catalogue.launcher.released } : undefined,
     keyBackup: d ? (readJson(file('settings.json'), {}) || {}).keyBackup || null : undefined,
     checklists: d ? readJson(file('checklists.json'), {}) : undefined,
     crashes: [...crashes.entries()].map(([gameId, c]) => ({ gameId, ...c })),
@@ -400,6 +404,40 @@ const api = {
   },
   reportText: (name) => fs.readFileSync(reportFile(name), 'utf8').slice(0, 200000),
   reportShow: (name) => { shell.showItemInFolder(reportFile(name)); return true; },
+  // ---- Launcher self-update: download, check (SHA-256 from the signed list), then start the setup after a yes ----
+  launcherUpdate: async () => {
+    const dev = !!developer();
+    const up = catalogue && selfupdate.available(catalogue, app.getVersion(), { developer: dev });
+    if (!up) throw new Error('No new launcher version');
+    const setup = await selfupdate.download(catalogue, app.getVersion(), channelSource(), path.join(DATA(), 'updates'), {
+      developer: dev, onProgress: (done, total) => send('progress', { kind: 'launcher', text: tr('Downloading the new launcher'), done, total: total || up.size }),
+    });
+    log().info(`launcher ${up.version} downloaded and checked`);
+    const r = await dialog.showMessageBox(win, { type: 'question', buttons: [tr('Update now'), tr('Later')], defaultId: 0, cancelId: 1,
+      message: tr('Update Zero Launcher to version {v}?', { v: up.version }), detail: tr('The launcher closes, the setup opens. Your games and settings stay.') });
+    if (r.response !== 0) return false;
+    log().info(`launcher setup started (${up.version})`);
+    if (process.platform === 'win32') require('child_process').spawn(setup, [], { detached: true, stdio: 'ignore' }).unref();
+    else await shell.openPath(setup);
+    setTimeout(() => { app.isQuitting = true; app.quit(); }, 500);
+    return true;
+  },
+  devLauncherAdd: async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Pick ZeroLauncherSetup-<version>.exe (from the dist folder)', properties: ['openFile'], filters: [{ name: 'Launcher setup', extensions: ['exe'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const l = await devChannel().setLauncher(r.filePaths[0]);
+    log().info(`launcher ${l.version} added to the channel (not sent to players)`);
+    return refresh();
+  },
+  devLauncherRelease: async () => {
+    const l = catalogue && catalogue.launcher;
+    if (!l) throw new Error('No launcher setup in the channel yet');
+    const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Send to players', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: `Send launcher ${l.version} to EVERYONE?`, detail: 'Players see an "Update the launcher" button after you press Upload.' });
+    if (r.response !== 0) return state();
+    devChannel().releaseLauncher();
+    return refresh();
+  },
   // ---- Back up my launcher data: one zip, saved only where the player picks ----
   backupSave: async () => {
     const day = new Date().toISOString().slice(0, 10);
@@ -754,6 +792,7 @@ const SUB_ID = /^[a-z0-9][a-z0-9-]{1,40}--[a-z0-9][a-z0-9-]{1,40}--v?[0-9A-Za-z.
 const pid = (x) => V.match(x, projects.ID_RE, 'project id');
 const absPath = (x, what = 'folder') => { if (typeof x !== 'string' || x.length > 1000 || !path.isAbsolute(x) || x.includes('\0')) throw new Error('Bad input: ' + what); return x; };
 const CHECKS = {
+  launcherUpdate: none, devLauncherAdd: none, devLauncherRelease: none,
   logCopy: none, logShow: none, backupSave: none, backupLoad: none,
   reportsList: none, reportText: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); }, reportShow: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); },
   devProjects: none, devStatusReport: none,

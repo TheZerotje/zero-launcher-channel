@@ -13,6 +13,7 @@ const { fetchBytes } = require('./net');
 
 const FORMAT = 1;
 const ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
+const LAUNCHER_FILE = /^packages\/launcher\/ZeroLauncherSetup-[0-9A-Za-z.-]{1,40}\.exe$/;
 
 const isHttps = (u) => typeof u === 'string' && u.length <= 500 && /^https:\/\/[^\s"'<>()\\]+$/.test(u);
 // Trailer: only YouTube, only https (it opens in the normal browser).
@@ -55,6 +56,12 @@ function validate(cat) {
       else if (!n.date || Number.isNaN(Date.parse(n.date))) errors.push(`news "${n.title}": bad date`);
       else if (n.image && !httpsUrl(n.image)) errors.push(`news "${n.title}": picture must be an https address`);
     }
+  }
+  if (cat && cat.launcher !== undefined) { // a new launcher version (Windows setup), checked like a game download
+    const l = cat.launcher, f = (l && l.file) || {};
+    if (!l || !versions.isValid(l.version || '') || typeof l.released !== 'boolean') errors.push('launcher: bad version');
+    else if (!LAUNCHER_FILE.test(f.url || '') || !/^[a-f0-9]{64}$/.test(f.sha256 || '') || !Number.isInteger(f.size) || f.size < 1 || f.size > 500 * 1048576) errors.push('launcher: bad file');
+    else if (l.notes !== undefined && (typeof l.notes !== 'string' || l.notes.length > 600)) errors.push('launcher: notes too long');
   }
   for (const t of (cat && cat.testers) || []) {
     if (!/^[A-Z]{1,4}-[0-9A-F]{4}-[0-9A-F]{4}$/.test(t.accountId || '') || !Array.isArray(t.games)) errors.push('bad tester entry');
@@ -162,4 +169,4 @@ function resolveFileUrl(source, fileUrl) {
   return path.join(source, fileUrl);
 }
 
-module.exports = { isHttps, isTrailer, statesFor, FORMAT, ID_RE, emptyCatalogue, validate, currentRelease, playerView, loadChannel, loadChannelCached, verifyAndParse, retryDelay, resolveFileUrl };
+module.exports = { LAUNCHER_FILE, isHttps, isTrailer, statesFor, FORMAT, ID_RE, emptyCatalogue, validate, currentRelease, playerView, loadChannel, loadChannelCached, verifyAndParse, retryDelay, resolveFileUrl };

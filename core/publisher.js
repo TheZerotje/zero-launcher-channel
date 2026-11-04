@@ -172,6 +172,27 @@ class Channel {
   }
 
   // News for the Store (signed with the list). Newest first for players.
+  // A new launcher version: copy Zero's ZeroLauncherSetup-x.y.z.exe into the channel. Players do NOT get it
+  // until Zero presses "Send to players" (releaseLauncher) AND then Upload.
+  async setLauncher(setupFile, notes = '') {
+    const name = path.basename(setupFile);
+    const m = /^ZeroLauncherSetup-([0-9A-Za-z.-]{1,40})\.exe$/.exec(name);
+    if (!m || !versions.isValid(m[1])) throw new Error('Pick the ZeroLauncherSetup-<version>.exe file from the dist folder');
+    const cat = this.read();
+    if (cat.launcher && versions.compare(m[1], cat.launcher.version) < 0) throw new Error(`The channel already has a newer launcher (${cat.launcher.version})`);
+    const url = `packages/launcher/${name}`;
+    fs.mkdirSync(path.join(this.dir, 'packages', 'launcher'), { recursive: true });
+    fs.copyFileSync(setupFile, path.join(this.dir, url));
+    const size = fs.statSync(path.join(this.dir, url)).size;
+    cat.launcher = { version: m[1], released: false, notes: String(notes).slice(0, 600), file: { url, size, sha256: await sha256File(path.join(this.dir, url)) } };
+    return this._write(cat).launcher;
+  }
+  releaseLauncher() {
+    const cat = this.read();
+    if (!cat.launcher) throw new Error('No launcher setup in the channel yet');
+    cat.launcher.released = true;
+    return this._write(cat).launcher;
+  }
   addNews({ title, text = '', image = '' }) {
     const cat = this.read();
     const item = { id: `n${Date.now().toString(36)}${require('crypto').randomBytes(3).toString('hex')}`, title: String(title || '').trim(), text: String(text || '').trim(), date: new Date().toISOString() };
