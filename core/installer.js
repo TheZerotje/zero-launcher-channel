@@ -112,7 +112,7 @@ class Installer {
 
     const state = this.installed();
     const old = state[game.id];
-    state[game.id] = { ...(old || {}), version: release.version, exe: release.exe, dir: finalDir, installedAt: new Date().toISOString() };
+    state[game.id] = { ...(old || {}), name: game.name || game.id, version: release.version, exe: release.exe, dir: finalDir, installedAt: new Date().toISOString() };
     this._save(state);
     // Remove the old version only after the new one is safely in place.
     if (old && old.dir && old.dir !== finalDir && !this.running.has(game.id)) {

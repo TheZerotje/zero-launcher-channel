@@ -72,15 +72,9 @@ function playerView(cat, viewer) {
   };
 }
 
-// Load + verify a channel. source = folder path or http(s) base address.
-async function loadChannel(source, publicKeyPem) {
-  const read = async (name) => {
-    if (/^https?:\/\//.test(source)) return fetchBytes(source.replace(/\/$/, '') + '/' + name);
-    return fs.promises.readFile(path.join(source, name));
-  };
-  const bytes = await read('catalogue.json');
-  const sig = (await read('catalogue.json.sig')).toString('utf8');
-  if (!verify(bytes, sig, publicKeyPem)) {
+// Check the signature, then parse + validate. Throws BAD_SIGNATURE / BAD_CATALOGUE.
+function verifyAndParse(bytes, sig, publicKeyPem) {
+  if (!verify(bytes, String(sig), publicKeyPem)) {
     const e = new Error('Catalogue signature is wrong. Refusing to use it.');
     e.code = 'BAD_SIGNATURE';
     throw e;
@@ -95,6 +89,47 @@ async function loadChannel(source, publicKeyPem) {
   return cat;
 }
 
+async function readChannelFiles(source) {
+  const read = async (name) => {
+    if (/^https?:\/\//.test(source)) return fetchBytes(source.replace(/\/$/, '') + '/' + name);
+    return fs.promises.readFile(path.join(source, name));
+  };
+  const bytes = await read('catalogue.json');
+  const sig = (await read('catalogue.json.sig')).toString('utf8');
+  return { bytes, sig };
+}
+
+// Load + verify a channel. source = folder path or http(s) base address.
+async function loadChannel(source, publicKeyPem) {
+  const { bytes, sig } = await readChannelFiles(source);
+  return verifyAndParse(bytes, sig, publicKeyPem);
+}
+
+// Same, but keeps the last GOOD list on disk (cacheDir). If the channel can't be reached, or sends a
+// list that fails the check, the last good list is used (checked again with Zero's key).
+// Returns { cat, offline, error } - error is the reason the fresh list was not used.
+async function loadChannelCached(source, publicKeyPem, cacheDir) {
+  const cBytes = path.join(cacheDir, 'catalogue.json'), cSig = path.join(cacheDir, 'catalogue.json.sig');
+  try {
+    const { bytes, sig } = await readChannelFiles(source);
+    const cat = verifyAndParse(bytes, sig, publicKeyPem);
+    try {
+      const { writeFileAtomic } = require('./fsutil');
+      writeFileAtomic(cBytes, bytes); writeFileAtomic(cSig, sig);
+    } catch {}
+    return { cat, offline: false, error: null };
+  } catch (error) {
+    let cat = null;
+    try { cat = verifyAndParse(fs.readFileSync(cBytes), fs.readFileSync(cSig, 'utf8'), publicKeyPem); } catch {}
+    return { cat, offline: !!cat, error };
+  }
+}
+
+// Wait time before trying again after a failed check: 1 min, 5 min, then 30 min.
+function retryDelay(failures) {
+  return [60 * 1000, 5 * 60 * 1000, 30 * 60 * 1000][Math.min(Math.max(failures, 1), 3) - 1];
+}
+
 // Turn a release's file url (may be relative to the channel) into a full address/path.
 function resolveFileUrl(source, fileUrl) {
   if (/^https?:\/\//.test(fileUrl)) return fileUrl;
@@ -106,4 +141,4 @@ function resolveFileUrl(source, fileUrl) {
   return path.join(source, fileUrl);
 }
 
-module.exports = { statesFor, FORMAT, ID_RE, emptyCatalogue, validate, currentRelease, playerView, loadChannel, resolveFileUrl };
+module.exports = { statesFor, FORMAT, ID_RE, emptyCatalogue, validate, currentRelease, playerView, loadChannel, loadChannelCached, verifyAndParse, retryDelay, resolveFileUrl };

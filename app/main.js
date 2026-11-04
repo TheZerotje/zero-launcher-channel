@@ -5,7 +5,7 @@
 const { app, BrowserWindow, ipcMain, shell, Tray, Menu, dialog, nativeImage, Notification } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { loadChannel, playerView, currentRelease } = require('../core/catalogue');
+const { loadChannelCached, playerView, currentRelease, retryDelay } = require('../core/catalogue');
 const { Installer } = require('../core/installer');
 const { findUpdates, CHECK_EVERY_MS } = require('../core/updater');
 const testers = require('../core/testers');
@@ -35,7 +35,7 @@ const { readJson, writeJsonAtomic: writeJson, writeFileAtomic } = require('../co
 const { V } = require('../core/validate');
 
 let win = null, tray = null, installer = null, ai = null, lastHub = null;
-let catalogue = null, catalogueError = null, lastCheck = null;
+let catalogue = null, catalogueError = null, lastCheck = null, offline = false, failures = 0, retryTimer = null;
 let queue = null; // downloads: one at a time (core/queue.js)
 const MUTED = !!process.env.ZL_MUTE;
 global.zlNotices = []; // every notification we showed (tests read this)
@@ -118,13 +118,16 @@ function godotProjects() {
 const publicJob = (j) => j && { stage: j.stage, done: j.done || 0, total: j.total || 0, version: j.version };
 
 async function refresh() {
-  try {
-    catalogue = await loadChannel(channelSource(), publicKey());
-    catalogueError = null;
-  } catch (e) {
-    catalogueError = e.code === 'BAD_SIGNATURE' ? 'The game list failed the safety check, so it was not used.' : 'Could not load the game list. Are you online?';
-    console.error('[catalogue]', e.message);
-  }
+  const r = await loadChannelCached(channelSource(), publicKey(), path.join(DATA(), 'cache'));
+  if (r.cat) catalogue = r.cat;
+  offline = r.offline;
+  catalogueError = !r.error ? null
+    : r.error.code === 'BAD_SIGNATURE' ? 'The game list failed the safety check, so it was not used.'
+    : r.offline ? null : 'Could not load the game list. Are you online?';
+  if (r.error) console.error('[catalogue]', r.error.message);
+  // Failed? Try again by itself after 1 min, then 5 min, then 30 min.
+  clearTimeout(retryTimer);
+  if (r.error) { failures++; retryTimer = setTimeout(refresh, retryDelay(failures)); } else failures = 0;
   lastCheck = new Date().toISOString();
   send('state', state());
   checkNewTestVersions();
@@ -134,8 +137,10 @@ async function refresh() {
 
 function state() {
   const v = viewer();
-  const view = catalogue ? playerView(catalogue, v) : { games: [] };
   const inst = installer.installed();
+  // No list at all (first start, offline): still show installed games so they can be played.
+  const view = catalogue ? playerView(catalogue, v)
+    : { games: Object.entries(inst).map(([id, i]) => ({ id, name: i.name || id, kind: 'pc', releases: [] })) };
   const updates = catalogue ? findUpdates(catalogue, inst, v).map((u) => u.game.id) : [];
   const d = developer();
   return {
@@ -151,7 +156,7 @@ function state() {
     })),
     testers: d && catalogue ? catalogue.testers || [] : undefined,
     uploadNeeded: d ? uploadNeeded() : undefined,
-    error: catalogueError, lastCheck, muted: MUTED,
+    error: catalogueError, offline, lastCheck, muted: MUTED, nextRetry: failures ? retryDelay(failures) : null,
   };
 }
 

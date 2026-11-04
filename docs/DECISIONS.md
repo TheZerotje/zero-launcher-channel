@@ -72,3 +72,12 @@ Zero was asleep. When something was unclear I picked the safest simple option an
 26. **Keyboard for Zero**: Ctrl+1..9 opens the menu pages in this order: the 7 developer pages first
     (My games = Ctrl+1, This week = Ctrl+2, Publish = Ctrl+3 …), then Store, Library. Ctrl+F jumps to the search box
     on any page that has one (players too).
+
+## Part 2
+27. **Offline**: the last good game list (and its signature) is kept in the app data "cache" folder. It is only
+    saved after it passed the signature check, and it is checked again every time it is read. If the internet
+    is down, or the channel sends a list that fails the check, the last good list is used. Players see a small
+    note "Offline – showing your games from last time". If there is no list at all, installed games are still
+    shown in the Library (the game name is now saved at install) and can be played.
+28. **Retry**: after a failed check the launcher tries again by itself after 1 minute, then 5 minutes, then
+    every 30 minutes, until it works.

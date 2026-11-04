@@ -135,6 +135,7 @@ P.store = () => {
     h('div', { class: 'hero' }, h('div', {}, h('h2', {}, t("Zero's Arcade")), h('div', { class: 'dim' }, t('Every website game, inside the launcher.'))),
       h('button', { class: 'btn', onclick: () => call('openArcade') }, t('Open the Arcade'))),
     S.error ? h('div', { class: 'err' }, t(S.error)) : null,
+    S.offline ? h('div', { class: 'note offline' }, t('Offline – showing your games from last time')) : null,
     h('div', { class: 'row tools' }, searchBox('store-q', storeFilter.q, t('Find a game…'), (v) => { storeFilter.q = v; }),
       h('div', { class: 'row chips' }, kinds.map(([k, l]) => h('button', { class: 'chip' + (storeFilter.kind === k ? ' on' : ''), onclick: () => { storeFilter.kind = k; render(); } }, l)))),
     pc.length ? [h('h3', {}, t('PC games')), h('div', { class: 'grid' }, pc.map(card))] : null,
@@ -149,6 +150,7 @@ P.library = () => {
     : (a, b) => ((b.installed && b.installed.lastPlayed) || '').localeCompare((a.installed && a.installed.lastPlayed) || '') || a.name.localeCompare(b.name));
   const any = S.games.some((g) => g.installed || g.job);
   return [h('h1', {}, t('Library')), h('p', { class: 'sub' }, S.settings.autoUpdate ? t('Updates install by themselves.') : t('Auto update is off. Press Update when you see it.')),
+    S.offline ? h('div', { class: 'note offline' }, t('Offline – showing your games from last time')) : S.error ? h('div', { class: 'err' }, t(S.error)) : null,
     any ? h('div', { class: 'row tools' }, searchBox('lib-q', libFilter.q, t('Find a game…'), (v) => { libFilter.q = v; }),
       h('label', { class: 'inline' }, t('Sort'), h('select', { id: 'lib-sort', onchange: (e) => { libFilter.sort = e.target.value; render(); } },
         h('option', { value: 'played', selected: libFilter.sort === 'played' }, t('Last played')), h('option', { value: 'name', selected: libFilter.sort === 'name' }, t('Name (A to Z)'))))) : null,

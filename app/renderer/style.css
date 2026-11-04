@@ -99,3 +99,4 @@ details.git{margin-top:6px;font-size:13px}details.git summary{cursor:pointer;col
 .commit{padding:2px 0 2px 12px;font-size:13px}
 .loading::before{content:"";display:inline-block;width:12px;height:12px;margin-right:8px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
 @keyframes spin{to{transform:rotate(360deg)}}
+.note{background:#3d7dff1f;border:1px solid #3d7dff55;color:#b9cdff;padding:8px 14px;border-radius:10px;margin-bottom:16px;font-size:14px}

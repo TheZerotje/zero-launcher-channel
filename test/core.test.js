@@ -541,3 +541,29 @@ test('safe start: typed text never becomes a command', async () => {
   assert.deepEqual(JSON.parse(out), nasty);
   assert.ok(!fs.existsSync(path.join(dir, 'hacked.txt')), 'no command ran');
 });
+
+test('offline: last good list is kept and used; a bad list is never cached', async () => {
+  const { loadChannelCached, retryDelay } = require('../core/catalogue');
+  const keys = generateKeyPair();
+  const chDir = tmp(), cache = tmp();
+  const ch = new Channel(chDir, keys.privateKey);
+  ch.upsertGame({ id: 'webby', name: 'Webby', kind: 'web', url: 'https://x.test/' });
+  let r = await loadChannelCached(chDir, keys.publicKey, cache);
+  assert.equal(r.offline, false); assert.equal(r.error, null); assert.equal(r.cat.games.length, 1);
+  assert.ok(fs.existsSync(path.join(cache, 'catalogue.json')));
+  // channel gone (offline)
+  r = await loadChannelCached(path.join(chDir, 'gone'), keys.publicKey, cache);
+  assert.equal(r.offline, true); assert.ok(r.error); assert.equal(r.cat.games[0].id, 'webby');
+  // channel sends a changed list: refused, last good list used, cache NOT replaced
+  const f = path.join(chDir, 'catalogue.json');
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('Webby', 'Evil'));
+  r = await loadChannelCached(chDir, keys.publicKey, cache);
+  assert.equal(r.error.code, 'BAD_SIGNATURE'); assert.equal(r.cat.games[0].name, 'Webby');
+  assert.match(fs.readFileSync(path.join(cache, 'catalogue.json'), 'utf8'), /Webby/);
+  // changed cache file: not used either
+  const cf = path.join(cache, 'catalogue.json');
+  fs.writeFileSync(cf, fs.readFileSync(cf, 'utf8').replace('Webby', 'Evil'));
+  r = await loadChannelCached(path.join(chDir, 'gone'), keys.publicKey, cache);
+  assert.equal(r.cat, null); assert.equal(r.offline, false);
+  assert.deepEqual([1, 2, 3, 9].map(retryDelay), [60000, 300000, 1800000, 1800000]);
+});

@@ -115,6 +115,7 @@
     'Close the game first': 'Sluit eerst de game',
     'No version available for you yet': 'Nog geen versie voor jou',
     'Game not found': 'Game niet gevonden',
+    'Offline – showing your games from last time': 'Offline – je ziet je games van de vorige keer',
   };
 
   function fill(text, vars) {
