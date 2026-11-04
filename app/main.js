@@ -483,6 +483,18 @@ const api = {
     if (r.response !== 0) return null;
     projectStore().bringBack(id); send('state', state()); return projectsView();
   },
+  // Pick a folder for a project (replaces `old`, or adds one). The person picks it in a Windows folder box.
+  devProjectPickFolder: async (id, old) => {
+    const p = projectStore().load().projects.find((x) => x.id === id);
+    if (!p) throw new Error('Project not found');
+    if (old && !p.folders.includes(old)) throw new Error('Unknown folder');
+    const pick = await dialog.showOpenDialog(win, { title: `Pick the folder of ${p.name}`, properties: ['openDirectory'] });
+    if (pick.canceled || !pick.filePaths[0]) return null;
+    const dir = pick.filePaths[0];
+    const folders = old ? p.folders.map((f) => (f === old ? dir : f)) : [...p.folders, dir];
+    projectStore().update(id, { folders: [...new Set(folders)] });
+    return projectsView();
+  },
   devProjectIgnoreFolder: (dir) => { projectStore().ignoreFolder(dir); return projectsView(); },
   devProjectArchive: async (id, folder) => {
     const p = projectStore().load().projects.find((x) => x.id === id);
@@ -679,6 +691,7 @@ const CHECKS = {
   devProjectAdd: ([o, ...rest]) => { V.obj(o); noMore(rest); V.str(o.name, 'name', 80, { allowEmpty: false }); if (o.type !== undefined) V.oneOf(o.type, Object.keys(projects.TYPES), 'type'); if (o.folder !== undefined) V.dir(o.folder); },
   devProjectScrap: ([id, reason, ...rest]) => { pid(id); V.str(reason, 'reason', 200, { allowEmpty: false }); noMore(rest); },
   devProjectBringBack: ([id, ...rest]) => { pid(id); noMore(rest); },
+  devProjectPickFolder: ([id, old, ...rest]) => { pid(id); if (old !== undefined && old !== null) V.str(old, 'folder', 1000, { allowEmpty: false }); noMore(rest); }, // old must also be one of the project's folders (checked in the call)
   devProjectIgnoreFolder: ([dir, ...rest]) => { absPath(dir); noMore(rest); },
   devProjectArchive: ([id, folder, ...rest]) => { pid(id); absPath(folder); noMore(rest); },
   devReviewChoice: ([id, choice, reason, ...rest]) => { pid(id); V.oneOf(choice, ['keep', 'pause', 'scrap', 'skip'], 'choice'); V.optStr(reason, 'reason', 200); noMore(rest); },

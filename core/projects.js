@@ -109,7 +109,7 @@ class ProjectStore {
       if ('priority' in patch) set('priority', clampPrio(patch.priority));
       for (const k of ['nextStep', 'notes', 'repo']) if (k in patch) set(k, String(patch[k] || '').slice(0, 500));
       if ('needsWork' in patch) { if (patch.needsWork) set('needsWork', String(patch.needsWork).slice(0, 200)); else if (p.needsWork) { delete p.needsWork; changes.push('needsWork'); } }
-      if ('folders' in patch && Array.isArray(patch.folders)) set('folders', patch.folders.filter((f) => typeof f === 'string' && path.isAbsolute(f)).slice(0, 10));
+      if ('folders' in patch && Array.isArray(patch.folders)) set('folders', patch.folders.filter((f) => typeof f === 'string' && (path.isAbsolute(f) || p.folders.includes(f))).slice(0, 10)); // keep old paths as they are
       if (changes.length) {
         p.lastTouched = new Date(now).toISOString();
         p.history.push({ date: p.lastTouched, what: `Changed ${changes.join(', ')}` + (changes.includes('stage') ? ` (now ${STAGES[p.stage]})` : '') });

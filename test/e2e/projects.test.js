@@ -173,3 +173,28 @@ test('quick review: one card at a time, 4 buttons, saved in history; week plan u
     assert.deepEqual(errors, []);
   } finally { await close(app); }
 });
+
+test('fix a red folder in one click: Pick folder replaces the missing path', async () => {
+  const demo = makeDemo();
+  const newDir = path.join(demo.dir, 'real-marchlands'); fs.mkdirSync(newDir);
+  fs.writeFileSync(path.join(newDir, 'project.godot'), 'config/name="Marchlands"\nconfig/version="0.5.0"\n');
+  const { app, win, errors } = await launch(demo.dev);
+  try {
+    await mockDialogs(app, { folder: newDir });
+    const mr = row(win, 'Marchlands');
+    await mr.waitFor();
+    const missing = await mr.locator('.missing-path').count();
+    assert.ok(missing >= 1);
+    await mr.locator('button.pick-folder').first().click();
+    await win.waitForFunction((d) => [...document.querySelectorAll('.hub-row')].some((r) => r.textContent.includes('Marchlands') && r.textContent.includes(d)), newDir);
+    assert.equal(await row(win, 'Marchlands').locator('.missing-path').count(), missing - 1);
+    assert.match(await row(win, 'Marchlands').textContent(), /0\.5\.0/, 'status read from the new folder');
+    const saved = JSON.parse(fs.readFileSync(path.join(demo.dev, 'projects.json'), 'utf8')).projects.find((p) => p.id === 'marchlands');
+    assert.ok(saved.folders.includes(newDir));
+    // add a folder to a project without one
+    const sa = row(win, 'Roblox: Shape Army');
+    await sa.locator('button.add-folder').click();
+    await win.waitForFunction(() => document.body.textContent.includes('Folder added'));
+    assert.deepEqual(errors, []);
+  } finally { await close(app); }
+});
