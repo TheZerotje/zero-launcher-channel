@@ -19,6 +19,8 @@ const gamehub = require('../core/gamehub');
 const weekly = require('../core/weekly');
 const { DownloadQueue } = require('../core/queue');
 const strings = require('./renderer/strings');
+const godot = require('../core/godot');
+const crypto = require('crypto');
 
 const DEFAULTS = {
   siteUrl: 'https://zero-arcade.tail5afd52.ts.net:8443/',
@@ -86,6 +88,33 @@ function checkNewTestVersions() {
   }
   if (changed) { s.seenTests = seen; writeJson(file('settings.json'), s); }
 }
+// Developer: is the local game list different from the last one uploaded?
+function catalogueSha() {
+  const d = developer();
+  try { return crypto.createHash('sha256').update(fs.readFileSync(path.join(d.channelDir, 'catalogue.json'))).digest('hex'); } catch { return null; }
+}
+function uploadNeeded() {
+  const sha = catalogueSha();
+  return !!sha && sha !== (readJson(file('uploaded.json'), {}) || {}).catalogueSha;
+}
+
+// Friday 12:00: "Your new week plan is ready" (developer only).
+function checkWeekNotice() {
+  if (!developer()) return;
+  const s = readJson(file('settings.json'), {});
+  const due = weekly.noticeDue(s.weekNotice);
+  if (!due) return;
+  if (due.show) notify('Your new week plan is ready', 'Open "This week" in Zero Launcher to look at it.');
+  s.weekNotice = due.key; writeJson(file('settings.json'), s);
+}
+
+// Developer's Godot projects (from developer.json hub.projects) that the launcher may export.
+function godotProjects() {
+  const d = developer();
+  return ((d.hub && d.hub.projects) || []).filter((p) => p && p.path && fs.existsSync(path.join(p.path, 'project.godot')))
+    .map((p) => ({ id: p.id, name: p.name, path: p.path, preset: godot.hasPreset(p.path), info: godot.projectInfo(p.path) }));
+}
+
 const publicJob = (j) => j && { stage: j.stage, done: j.done || 0, total: j.total || 0, version: j.version };
 
 async function refresh() {
@@ -121,6 +150,7 @@ function state() {
       running: installer.isRunning(g.id), job: publicJob(queue.get(g.id)),
     })),
     testers: d && catalogue ? catalogue.testers || [] : undefined,
+    uploadNeeded: d ? uploadNeeded() : undefined,
     error: catalogueError, lastCheck, muted: MUTED,
   };
 }
@@ -288,7 +318,33 @@ const api = {
     const d = developer();
     if (!d.github || !d.github.repo || !d.github.token) throw new Error('Set github.repo and github.token in developer.json first');
     const gh = new GitHubChannel(d.github);
-    return gh.sync(d.channelDir, (t) => send('toast', { kind: 'info', text: t }));
+    const sha = catalogueSha();
+    const r = await gh.sync(d.channelDir, (text, p = {}) => send('progress', { kind: 'upload', text, done: p.done || 0, total: p.total || 0 }));
+    writeJson(file('uploaded.json'), { catalogueSha: sha, at: new Date().toISOString() });
+    send('state', state());
+    return r;
+  },
+  devGodotProjects: () => godotProjects(),
+  devGodotExport: async (gameId, version, notes) => {
+    const d = developer();
+    if (typeof gameId !== 'string' || typeof version !== 'string') throw new Error('Bad input');
+    const proj = godotProjects().find((p) => p.id === gameId);
+    if (!proj) throw new Error('No Godot project folder known for this game (developer.json hub.projects)');
+    const g = catalogue && catalogue.games.find((x) => x.id === gameId && x.kind === 'pc');
+    if (!g) throw new Error('Add this game as a PC game first');
+    const ver = version.trim() || (proj.info && proj.info.version) || '';
+    if (!ver) throw new Error('Type a version (example 0.20.0)');
+    const say = (text) => send('progress', { kind: 'godot', gameId, text });
+    const out = await godot.exportWindows({ godotPath: d.godotPath, projectDir: proj.path, gameName: proj.info ? proj.info.name : g.name, onLine: say });
+    try {
+      say('Packing the new version…');
+      const rel = await devChannel().addPcRelease({ gameId, buildDir: out.buildDir, version: ver, notes: String(notes || '').slice(0, 300), exe: out.exe });
+      say(`Done. ${g.name} ${ver} is added as Unreleased.`);
+      await refresh();
+      return rel;
+    } finally {
+      fs.rmSync(out.work, { recursive: true, force: true }); // our own temp folder only
+    }
   },
   devWebsite: async () => { const d = developer(); return { url: d.website.url, up: await website.isUp(d.website.url) }; },
   devAutoStart: (on) => {
@@ -309,6 +365,14 @@ const api = {
     return job;
   },
   devAiStop: (id) => ai.stop(id),
+  devAiHistory: () => ai.history(),
+  devAiLog: (id) => ai.readLog(id),
+  devAiOpenLog: (id) => shell.openPath(ai.logFile(id)),
+  devAiRerun: (id) => {
+    const old = ai.history(1000).find((j) => j.id === id);
+    if (!old) throw new Error('Unknown job');
+    return api.devAiStart(`${old.said || old.tool}, ${old.task}`, old.cwd);
+  },
   devChatGPT: () => {
     const w = new BrowserWindow({ width: 1100, height: 850, title: 'ChatGPT', autoHideMenuBar: true, webPreferences: { sandbox: true, partition: 'persist:chatgpt' } });
     w.loadURL('https://chatgpt.com/'); return true;
@@ -383,6 +447,8 @@ else {
     }
     await refresh();
     setInterval(refresh, CHECK_EVERY_MS);
+    checkWeekNotice();
+    setInterval(checkWeekNotice, 60 * 1000);
   });
   app.on('window-all-closed', () => { if (!developer()) app.quit(); });
 }

@@ -43,8 +43,13 @@ const { FriendInbox, makeSubmission } = require('../core/friends');
   const proj = path.join(root, 'projects', 'Dustrunner'); fs.mkdirSync(path.join(proj, 'build', 'win'), { recursive: true });
   fs.writeFileSync(path.join(proj, 'project.godot'), 'config/name="Railrove"\nconfig/version="0.19.12.0"\nconfig/features=PackedStringArray("4.7")\n');
   fs.writeFileSync(path.join(proj, 'build', 'win', 'Railrove.exe'), 'x');
+  fs.writeFileSync(path.join(proj, 'export_presets.cfg'), '[preset.0]\n\nname="Windows Desktop"\nplatform="Windows Desktop"\n');
+  // A fake "Godot" for tests (Linux/macOS): writes the .exe it is asked for. Never makes sound.
+  const fakeGodot = path.join(root, 'tools', 'fake-godot.sh');
+  fs.mkdirSync(path.dirname(fakeGodot), { recursive: true });
+  fs.writeFileSync(fakeGodot, '#!/bin/sh\nfor a; do out="$a"; done\necho "fake godot: export to $out"\nprintf \'#!/bin/sh\\nsleep 1\\n\' > "$out"\nmkdir -p "$(dirname "$out")" && echo pck > "$(dirname "$out")/game.pck"\n', { mode: 0o755 });
   fs.writeFileSync(path.join(dev, 'developer.json'), JSON.stringify({
-    channelDir: chDir, privateKeyFile: path.join(root, 'zero-private.pem'), publisher: 'Zero',
+    channelDir: chDir, privateKeyFile: path.join(root, 'zero-private.pem'), publisher: 'Zero', godotPath: fakeGodot,
     website: { url: 'http://127.0.0.1:4599/', autoStart: false },
     friendsDir: path.join(dev, 'friends'), aiFolders: [{ name: 'Railrove', path: proj }],
     hub: { siteDir: site, projects: [{ id: 'railrove', name: 'Railrove', path: proj }, { id: 'marchlands', name: 'Marchlands', path: path.join(root, 'projects', 'Marchlands') }] },

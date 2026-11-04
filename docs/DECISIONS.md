@@ -44,3 +44,18 @@ Zero was asleep. When something was unclear I picked the safest simple option an
 16. **Settings from the screen are checked:** only known settings with known values can be changed
     (autoUpdate, notify, easyFont, textSize, lang). The old "installRoot" and "ui" settings can no longer be set
     from the screen.
+17. **Godot export works on a temp COPY of the project.** Real Godot writes cache files (.godot folder) while
+    exporting. To keep the rule "never change the game folder", the launcher copies the project to a temp
+    folder (without .git and old build folders), exports from the copy, and the .exe goes to another temp folder.
+    Slower for big projects, but your folder is never touched. Godot runs with --headless --audio-driver Dummy
+    at low priority. If the version box is empty, the version from project.godot is used.
+18. **"Upload needed"** = the local game list is different from the one at the last successful upload
+    (the launcher remembers a fingerprint of the list in uploaded.json). On a fresh PC it says "Upload needed"
+    until the first upload.
+19. **Week message**: "Your new week plan is ready" shows once when a new week starts (Friday 12:00).
+    The very first time the launcher runs it only remembers the week, so you do not get a message for a week
+    that was already going.
+20. **Git info is read only**: `git log` and `git --no-optional-locks status` (so git does not even refresh its
+    index file).
+21. **Two tests are skipped on Windows CI only**: the Godot export tests use a fake Godot that is a shell script.
+    They run on the Linux CI. This is not to hide a failure.

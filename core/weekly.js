@@ -51,4 +51,13 @@ function current(store, hub, focus, now = new Date()) {
   }) };
 }
 
-module.exports = { weekStart, key, suggest, current, DEFAULT_FOCUS };
+// Friday 12:00 message "Your new week plan is ready".
+// lastKey = the week we last told Zero about. Returns the new week key when a message is due, else null.
+// The very first time (no lastKey) we only remember the week, so Zero is not told about a week already running.
+function noticeDue(lastKey, now = new Date()) {
+  const k = key(weekStart(now));
+  if (!lastKey) return { key: k, show: false };
+  return k !== lastKey ? { key: k, show: true } : null;
+}
+
+module.exports = { weekStart, key, suggest, current, noticeDue, DEFAULT_FOCUS };

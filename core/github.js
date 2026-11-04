@@ -60,24 +60,32 @@ class GitHubChannel {
     const have = new Map(assets.map((a) => [a.name, a]));
     const cat = JSON.parse(fs.readFileSync(path.join(channelDir, 'catalogue.json'), 'utf8'));
     let uploaded = 0;
+    const todo = [];
     for (const g of cat.games) {
       for (const r of g.releases || []) {
         if (!r.file) continue;
         const name = r.file.url.split('/').pop();
         const existing = have.get(name);
         if (existing && existing.size === r.file.size) continue;
-        if (existing) await this._req('DELETE', `${this.api}/repos/${this.repo}/releases/assets/${existing.id}`);
-        onStep(`Uploading ${name} (${Math.round(r.file.size / 1048576)} MB)`);
-        await this._upload(rel, path.join(channelDir, r.file.url), name);
-        uploaded++;
+        todo.push({ name, file: path.join(channelDir, r.file.url), size: r.file.size, existing });
       }
+    }
+    const total = todo.length + 2;
+    let done = 0;
+    for (const t of todo) {
+      if (t.existing) await this._req('DELETE', `${this.api}/repos/${this.repo}/releases/assets/${t.existing.id}`);
+      onStep(`Uploading ${t.name} (${Math.round(t.size / 1048576)} MB)`, { done, total });
+      await this._upload(rel, t.file, t.name);
+      uploaded++; done++;
     }
     for (const name of ['catalogue.json.sig', 'catalogue.json']) {
       const existing = have.get(name);
       if (existing) await this._req('DELETE', `${this.api}/repos/${this.repo}/releases/assets/${existing.id}`);
+      onStep(`Uploading ${name}`, { done, total });
       await this._upload(rel, path.join(channelDir, name), name);
+      done++;
     }
-    onStep('Done. Players get it at their next check (within about 1 hour).');
+    onStep('Done. Players get it at their next check (within about 1 hour).', { done, total });
     return { uploaded, playerUrl: this.playerUrl };
   }
 }

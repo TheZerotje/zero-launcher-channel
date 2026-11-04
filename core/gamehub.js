@@ -8,6 +8,7 @@
 // Every value says where it came from, so Zero can see how sure it is.
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const STATUSES = {
   'needs-work': { label: 'Needs work', order: 0 },
@@ -85,6 +86,21 @@ function readProject(dir) {
   return out;
 }
 
+// Git (READ ONLY): last 5 commits + "are there changes not committed yet?".
+// --no-optional-locks: git status must not even refresh its index file.
+function gitInfo(dir, run = execFileSync) {
+  if (!dir || !fs.existsSync(path.join(dir, '.git'))) return null;
+  const git = (args) => run('git', ['--no-optional-locks', '-C', dir, ...args], { encoding: 'utf8', timeout: 5000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+  try {
+    const commits = git(['log', '-5', '--format=%cI%x09%s']).split('\n').filter(Boolean).map((l) => {
+      const i = l.indexOf('\t'); return { date: l.slice(0, i), message: l.slice(i + 1).slice(0, 200) };
+    });
+    let dirty = null;
+    try { dirty = git(['status', '--porcelain']).trim().length > 0; } catch {}
+    return { commits, dirty };
+  } catch { return { commits: [], dirty: null, error: 'Could not read git' }; }
+}
+
 // Website games: every folder with a game.json under the site folder (read only).
 function scanSite(siteDir) {
   const games = {};
@@ -133,7 +149,7 @@ function ago(iso, now = Date.now()) {
 }
 
 // Build the full list. opts: { seed, marks, siteDir, projects: [{id,name,path}], now, bugs: {slug: count} }
-function build({ seed = { games: [] }, marks = {}, siteDir, projects = [], now = Date.now(), bugs = {} }) {
+function build({ seed = { games: [] }, marks = {}, siteDir, projects = [], now = Date.now(), bugs = {}, git = execFileSync }) {
   const site = scanSite(siteDir);
   const byId = new Map();
   const get = (id) => { if (!byId.has(id)) byId.set(id, { id, facts: {} }); return byId.get(id); };
@@ -171,6 +187,8 @@ function build({ seed = { games: [] }, marks = {}, siteDir, projects = [], now =
     if (pr.engineVersion) fact(g, 'engineVersion', pr.engineVersion, 'pc');
     fact(g, 'changed', lastChanged(p.path), 'pc');
     if (pr.builds[0]) fact(g, 'lastBuild', pr.builds[0], 'pc');
+    const gi = gitInfo(p.path, git);
+    if (gi) fact(g, 'git', gi, 'pc');
   }
   for (const [id, m] of Object.entries(marks)) {
     const g = get(id);
@@ -193,7 +211,7 @@ function build({ seed = { games: [] }, marks = {}, siteDir, projects = [], now =
       id: g.id, name: v('name') || g.id, kind: v('kind') || 'web', status, statusLabel: STATUSES[status] ? STATUSES[status].label : status,
       statusSource: status === 'needs-work' ? (v('needsWork') ? 'you' : 'pc') : (g.facts.status ? g.facts.status.source : 'pc'),
       version: v('version'), folder: v('folder'), changed: v('changed'), changedAgo: ago(v('changed'), now),
-      lastBuild: v('lastBuild'), siteState: v('siteState'), nextStep: v('nextStep'), thread: v('thread'), note: v('note'),
+      lastBuild: v('lastBuild'), git: v('git'), siteState: v('siteState'), nextStep: v('nextStep'), thread: v('thread'), note: v('note'),
       category: v('category'), warnings: why, facts: g.facts,
     };
   });
@@ -201,4 +219,4 @@ function build({ seed = { games: [] }, marks = {}, siteDir, projects = [], now =
   return { games: list, scannedAt: new Date(now).toISOString(), site: { folder: siteDir, releaseFile: site.releaseFile, error: site.error }, seedAsOf: seed.asOf };
 }
 
-module.exports = { build, readProject, scanSite, lastChanged, STATUSES, slugify };
+module.exports = { build, readProject, scanSite, lastChanged, gitInfo, STATUSES, slugify };

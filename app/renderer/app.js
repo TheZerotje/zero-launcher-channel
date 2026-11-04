@@ -11,6 +11,10 @@ let hubData = null;
 let weekData = null;
 const aiLog = [];    // lines for the AI helper
 let aiJob = null;
+let godotList = null;   // Godot projects the launcher can export (developer)
+let upload = null;      // { text, done, total } while uploading
+const godotLog = {};    // gameId -> last lines of the Godot export
+let aiHistory = null;
 
 const $ = (s) => document.querySelector(s);
 const t = (text, vars) => window.ZLStrings.t(S && S.settings ? S.settings.lang : 'en', text, vars);
@@ -249,10 +253,14 @@ function hubRow(g) {
       g.nextStep ? h('div', { class: 'next' }, 'Next: ', g.nextStep) : null,
       g.warnings.length ? h('div', { class: 'warn' }, '⚠ ' + g.warnings.join(' · ')) : null,
       g.thread ? h('div', { class: 'dim' }, 'Chat: ' + g.thread) : null,
+      g.lastBuild ? h('div', { class: 'dim' }, `Last build: ${mb(g.lastBuild.size)} · ${new Date(g.lastBuild.at).toLocaleDateString()}`) : null,
+      g.git ? h('details', { class: 'git' }, h('summary', {}, `Git: ${g.git.commits.length ? 'last ' + g.git.commits.length + ' commits' : 'no commits'}${g.git.dirty ? ' · changes not committed' : ''}`),
+        g.git.commits.map((c) => h('div', { class: 'commit' }, h('span', { class: 'dim' }, new Date(c.date).toLocaleDateString() + ' '), c.message))) : null,
       edit),
     h('div', { class: 'hub-side' },
       g.folder ? h('button', { class: 'ghost small', title: g.folder, onclick: () => call('devOpenFolder', g.folder) }, 'Open folder') : h('span', { class: 'dim' }, 'no folder'),
       g.folder ? h('span', { class: 'path' }, g.folder) : null,
+      g.folder ? h('button', { class: 'ghost small', onclick: () => call('copy', g.folder).then(() => toast('Path copied')) }, 'Copy path') : null,
       h('div', { class: 'row' },
         h('button', { class: 'ghost small', onclick: (e) => { const x = e.target.closest('.hub-row').querySelector('.hub-edit'); x.style.display = x.style.display === 'none' ? 'block' : 'none'; } }, 'Edit'),
         (g.status === 'released' || g.status === 'needs-work') ? h('button', { class: 'ghost small', onclick: async () => {
@@ -307,6 +315,24 @@ P['dev-week'] = () => {
 };
 P['dev-publish'] = () => {
   const pc = S.games.filter((g) => g.kind === 'pc');
+  if (!godotList) { godotList = []; call('devGodotProjects').then((r) => { godotList = r; render(); }).catch(() => {}); }
+  const godotFor = (id) => godotList.find((p) => p.id === id);
+  const godotBox = (g) => {
+    const p = godotFor(g.id);
+    if (!p) return null;
+    return h('div', { class: 'godot' },
+      h('div', { class: 'row' }, h('button', { class: 'btn test', disabled: !p.preset, title: p.path, onclick: async () => {
+        const ver = $('#v-' + g.id).value.trim(), notes = $('#n-' + g.id).value.trim(); // read before the screen redraws
+        godotLog[g.id] = ['Starting…']; render();
+        try {
+          await call('devGodotExport', g.id, ver, notes);
+          toast('Exported from Godot. Added as Unreleased.');
+        } catch { godotLog[g.id].push('Failed. See the message above.'); }
+        set(await call('state'));
+      } }, 'Export from Godot'),
+      h('span', { class: 'dim' }, p.preset ? `Project: ${p.path}${p.info && p.info.version ? ' · version in project: ' + p.info.version : ''}` : 'No "Windows Desktop" export preset. Open the project in Godot: Project > Export > Add > Windows Desktop.')),
+      godotLog[g.id] ? h('div', { class: 'log small', id: 'godot-log-' + g.id }, godotLog[g.id].slice(-12).join('\n')) : null);
+  };
   const verRow = (g, r) => h('tr', {}, h('td', {}, 'v' + r.version), h('td', {}, h('span', { class: 'pill ' + r.state }, r.state)),
     h('td', { class: 'dim' }, r.notes || ''), h('td', { class: 'dim' }, r.file ? mb(r.file.size) : ''),
     h('td', {}, h('div', { class: 'row' },
@@ -315,8 +341,14 @@ P['dev-publish'] = () => {
       r.state === 'testing' ? h('button', { class: 'ghost small', onclick: () => call('devUnrelease', g.id, r.version).then(set) }, 'Back to unreleased') : null)));
   const all = S.games;
   return [h('h1', {}, 'Publish'), h('p', { class: 'sub' }, 'New versions start as Unreleased. Then: Send to testers → Release to everyone → Upload.'),
-    h('div', { class: 'panel' }, h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', { style: 'margin:0' }, 'Upload to players'),
-      h('button', { class: 'btn', onclick: async () => { const r = await call('devUpload'); toast(`Uploaded ${r.uploaded} new file(s)`); } }, 'Upload now')),
+    h('div', { class: 'panel' + (S.uploadNeeded ? ' needs-upload' : '') }, h('div', { class: 'row', style: 'justify-content:space-between' },
+      h('h3', { style: 'margin:0' }, 'Upload to players', S.uploadNeeded ? h('span', { class: 'pill unreleased upload-badge' }, 'Upload needed') : h('span', { class: 'pill released upload-badge' }, 'Up to date')),
+      h('button', { class: 'btn', disabled: !!upload, onclick: async () => {
+        upload = { text: 'Starting…', done: 0, total: 0 }; render();
+        try { const r = await call('devUpload'); toast(`Uploaded ${r.uploaded} new file(s)`); } finally { upload = null; render(); }
+      } }, upload ? 'Uploading…' : 'Upload now')),
+      S.uploadNeeded ? h('p', {}, 'You changed things that players do not have yet. Press Upload now when you are ready.') : null,
+      upload ? h('div', { class: 'upload-progress' }, h('div', { class: 'bar', style: 'margin:8px 0' }, h('i', { style: `width:${upload.total ? Math.round((upload.done / upload.total) * 100) : 5}%` })), h('span', { class: 'dim' }, upload.text)) : null,
       h('p', { class: 'dim' }, 'Sends the list and new game files to GitHub. Players get it within about 1 hour.')),
     pc.map((g) => h('div', { class: 'panel' },
       h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', { style: 'margin:0' }, g.name, g.owner && g.owner !== 'zero' ? h('span', { class: 'dim' }, '  by ' + g.owner) : null),
@@ -332,7 +364,8 @@ P['dev-publish'] = () => {
         toast('Packing… this can take a minute');
         await call('devAddVersion', { gameId: g.id, buildDir: dir, version: $('#v-' + g.id).value.trim(), notes: $('#n-' + g.id).value.trim() });
         toast('Added as Unreleased'); set(await call('state'));
-      } }, 'Pick build folder & add version'))),
+      } }, 'Pick build folder & add version'),
+      godotBox(g))),
     h('div', { class: 'panel' }, h('h3', {}, 'Add a game'),
       h('div', { class: 'form' },
         h('label', {}, 'Game id', h('input', { id: 'ng-id', placeholder: 'railrove' })),
@@ -401,6 +434,17 @@ P['dev-ai'] = () => {
     aiJob = await call('devAiStart', text, sel.value);
     aiLog.push(`(${aiJob.tool} is working…)`); render();
   };
+  if (!aiHistory) { aiHistory = []; call('devAiHistory').then((r) => { aiHistory = r; render(); }).catch(() => {}); }
+  const past = h('div', { class: 'panel' }, h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', { style: 'margin:0' }, 'Past jobs'),
+      h('button', { class: 'ghost small', onclick: async () => { aiHistory = await call('devAiHistory'); render(); } }, 'Refresh')),
+    aiHistory.length ? h('table', { class: 'ai-jobs' }, h('tr', {}, ['When', 'Tool', 'Task', 'Status', ''].map((x) => h('th', {}, x))),
+      aiHistory.map((j) => h('tr', {}, h('td', { class: 'dim' }, j.startedAt ? new Date(j.startedAt).toLocaleString() : ''), h('td', {}, j.tool || ''),
+        h('td', {}, String(j.task || '').slice(0, 90)), h('td', {}, h('span', { class: 'pill ' + ({ done: 'released', failed: 'pulled', running: 'testing' }[j.status] || 'unreleased') }, j.status)),
+        h('td', {}, h('div', { class: 'row' },
+          h('button', { class: 'ghost small', onclick: async () => { const text = await call('devAiLog', j.id); aiLog.length = 0; aiLog.push(`--- log of ${j.tool}: ${j.task} ---`, text); render(); } }, 'Show log'),
+          h('button', { class: 'ghost small', onclick: () => call('devAiOpenLog', j.id) }, 'Open log file'),
+          h('button', { class: 'ghost small', disabled: j.status === 'running', onclick: async () => { aiJob = await call('devAiRerun', j.id); aiLog.push(`\n> run again: ${j.task}`, `(${aiJob.tool} is working…)`); aiHistory = null; render(); } }, 'Run again'))))))
+      : h('p', { class: 'dim' }, 'No jobs yet.'));
   return [h('h1', {}, 'AI helper'), h('p', { class: 'sub' }, 'Type "claude, …" or "codex, …" or "chatgpt, …". It runs on this PC with your own account. No sound, no releases.'),
     h('div', { class: 'panel' }, h('label', {}, 'Folder', sel),
       h('textarea', { id: 'ai-text', style: 'margin-top:10px', placeholder: 'claude, add a night mode to the menu', onkeydown: (e) => { if (e.key === 'Enter' && e.ctrlKey) go(); } }),
@@ -408,7 +452,7 @@ P['dev-ai'] = () => {
         aiJob ? h('button', { class: 'btn bad', onclick: () => call('devAiStop', aiJob.id) }, 'Stop') : null,
         h('button', { class: 'ghost', onclick: () => call('devChatGPT') }, 'Open ChatGPT window'),
         h('span', { class: 'dim' }, 'Ctrl+Enter = Go'))),
-    log];
+    log, past];
 };
 P['dev-host'] = () => {
   const st = h('div', {}, h('p', { class: 'dim' }, 'Checking…'));
@@ -456,9 +500,17 @@ function set(s) { if (s && s.games) { S = s; render(); } }
 
 window.zl.on('state', (s) => { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); S = s; if (typing) renderNav(); else render(); });
 window.zl.on('toast', (m) => toast(m.name ? `${m.name}: ${t(m.text, m.vars)}` : t(m.text, m.vars), m.kind));
+window.zl.on('progress', (m) => {
+  if (m.kind === 'upload') { upload = { text: m.text, done: m.done, total: m.total }; if (page === 'dev-publish') render(); }
+  if (m.kind === 'godot') {
+    (godotLog[m.gameId] = godotLog[m.gameId] || []).push(m.text);
+    const el = $('#godot-log-' + m.gameId);
+    if (el) { el.textContent = godotLog[m.gameId].slice(-12).join('\n'); el.scrollTop = el.scrollHeight; } else if (page === 'dev-publish') render();
+  }
+});
 window.zl.on('ai', (m) => {
   if (m.line) aiLog.push(m.line);
-  if (m.end !== undefined) { aiLog.push(`(finished, code ${m.end})`); aiJob = null; }
+  if (m.end !== undefined) { aiLog.push(`(finished, code ${m.end})`); aiJob = null; aiHistory = null; }
   const log = $('#ai-log');
   if (log) { log.textContent = aiLog.join('\n'); log.scrollTop = log.scrollHeight; }
   if (m.end !== undefined && page === 'dev-ai') render();

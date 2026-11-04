@@ -236,8 +236,11 @@ test('GitHub sync against a fake GitHub', async () => {
   try {
     const base = `http://127.0.0.1:${srv.address().port}`;
     const gh = new GitHubChannel({ repo: 'me/chan', token: 't0k', api: base, uploads: base });
-    let r = await gh.sync(dir);
+    const steps = [];
+    let r = await gh.sync(dir, (text, p) => steps.push({ text, ...p }));
     assert.equal(r.uploaded, 1);
+    assert.deepEqual(steps.map((x) => x.done), [0, 1, 2, 3], 'upload progress counts up');
+    assert.ok(steps.every((x) => x.total === 3));
     assert.deepEqual(assets.map((a) => a.name).sort(), ['catalogue.json', 'catalogue.json.sig', 'tg-1.0.zip']);
     r = await gh.sync(dir);
     assert.equal(r.uploaded, 0, 'zip not uploaded twice');
@@ -381,4 +384,90 @@ test('strings: every screen text has a Dutch version', () => {
   assert.equal(strings.t('en', 'Play'), 'Play');
   assert.equal(strings.t('nl', 'Downloading {pct}%', { pct: 40 }), 'Downloaden 40%');
   assert.equal(strings.t('nl', 'some unknown text'), 'some unknown text');
+});
+
+const notWindows = process.platform === 'win32' ? 'the fake Godot is a shell script' : false;
+test('Godot export: copies the project, exports headless to temp, never changes the project', { skip: notWindows }, async () => {
+  const godot = require('../core/godot');
+  const dir = tmp();
+  const proj = path.join(dir, 'MyGame');
+  fs.mkdirSync(path.join(proj, '.godot'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'project.godot'), 'config/name="My Game"\nconfig/version="1.2.0"\n');
+  const fake = path.join(dir, 'godot.sh');
+  // fake Godot: writes the exe, and ALSO writes a cache file in the folder it runs in (like real Godot)
+  fs.writeFileSync(fake, '#!/bin/sh\nfor a; do out="$a"; done\necho "$@" > args.txt\necho cache > .godot/new-cache\nprintf x > "$out"\n', { mode: 0o755 });
+  const before = JSON.stringify(fs.readdirSync(proj, { recursive: true }).sort());
+  // no preset: clear message
+  await assert.rejects(godot.exportWindows({ godotPath: fake, projectDir: proj }), /no "Windows Desktop" export preset/);
+  fs.writeFileSync(path.join(proj, 'export_presets.cfg'), '[preset.0]\nname="Windows Desktop"\n');
+  const lines = [];
+  const out = await godot.exportWindows({ godotPath: fake, projectDir: proj, gameName: 'My Game', onLine: (l) => lines.push(l) });
+  assert.ok(fs.existsSync(path.join(out.buildDir, 'My Game.exe')));
+  assert.ok(!godot.isInside(out.buildDir, proj), 'export is outside the project');
+  const after = JSON.stringify(fs.readdirSync(proj, { recursive: true }).sort());
+  assert.equal(after, JSON.stringify(JSON.parse(before).concat(['export_presets.cfg']).sort()), 'project folder not changed by the export');
+  assert.ok(!fs.existsSync(path.join(proj, '.godot', 'new-cache')));
+  assert.equal(godot.projectInfo(proj).version, '1.2.0');
+  // missing godot / bad project
+  await assert.rejects(godot.exportWindows({ godotPath: path.join(dir, 'nope'), projectDir: proj }), /Godot not found/);
+  await assert.rejects(godot.exportWindows({ godotPath: fake, projectDir: dir }), /No Godot project/);
+  // a failing Godot gives a clear error
+  fs.writeFileSync(fake, '#!/bin/sh\necho "ERROR: boom"\nexit 3\n', { mode: 0o755 });
+  await assert.rejects(godot.exportWindows({ godotPath: fake, projectDir: proj }), /export failed \(code 3\)[\s\S]*boom/);
+});
+
+test('git info is read only: last 5 commits + changes not committed', () => {
+  const { gitInfo } = require('../core/gamehub');
+  const { execFileSync } = require('child_process');
+  const dir = tmp();
+  const g = (...a) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { stdio: 'ignore' });
+  g('init', '-q');
+  for (let i = 1; i <= 7; i++) { fs.writeFileSync(path.join(dir, 'f.txt'), String(i)); g('add', '.'); g('commit', '-q', '-m', 'change ' + i); }
+  const idx = path.join(dir, '.git', 'index');
+  const mtime = fs.statSync(idx).mtimeMs;
+  let info = gitInfo(dir);
+  assert.equal(info.commits.length, 5);
+  assert.equal(info.commits[0].message, 'change 7');
+  assert.equal(info.dirty, false);
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'edited');
+  info = gitInfo(dir);
+  assert.equal(info.dirty, true);
+  assert.equal(fs.statSync(idx).mtimeMs, mtime, 'git index not touched');
+  assert.equal(gitInfo(tmp()), null, 'not a git folder');
+});
+
+test('Friday 12:00 week message: once per week, not on the very first run', () => {
+  const weekly = require('../core/weekly');
+  const thu = new Date(2026, 10, 5, 18, 0); // Thu 5 Nov 2026
+  const first = weekly.noticeDue(undefined, thu);
+  assert.equal(first.show, false);
+  assert.equal(weekly.noticeDue(first.key, thu), null);
+  const fri = new Date(2026, 10, 6, 12, 1);
+  const due = weekly.noticeDue(first.key, fri);
+  assert.equal(due.show, true);
+  assert.notEqual(due.key, first.key);
+  assert.equal(weekly.noticeDue(due.key, new Date(2026, 10, 7, 9)), null);
+  assert.equal(weekly.noticeDue(first.key, new Date(2026, 10, 6, 11, 59)), null, 'not before 12:00');
+});
+
+test('AI helper: past jobs list, status and log', () => {
+  const { AiHelper } = require('../core/aihelper');
+  const root = tmp();
+  const mk = (id, job, end, out) => {
+    fs.mkdirSync(path.join(root, id));
+    fs.writeFileSync(path.join(root, id, 'job.json'), JSON.stringify(job));
+    if (end) fs.writeFileSync(path.join(root, id, 'end.json'), JSON.stringify(end));
+    fs.writeFileSync(path.join(root, id, 'output.jsonl'), out || '');
+  };
+  mk('1762000000000-1', { tool: 'claude', said: 'claude', task: 'fix jump', cwd: root, startedAt: '2026-11-01T10:00:00Z' }, { code: 0 },
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'I fixed the jump.' }] } }) + '\n');
+  mk('1762000001000-2', { tool: 'codex', said: 'codex', task: 'add menu', cwd: root }, { code: 1 });
+  mk('1762000002000-3', { tool: 'claude', task: 'stopped one', cwd: root }, null);
+  fs.mkdirSync(path.join(root, 'not-a-job'));
+  const ai = new AiHelper(root);
+  const h = ai.history();
+  assert.deepEqual(h.map((j) => j.status), ['stopped', 'failed', 'done']);
+  assert.match(ai.readLog('1762000000000-1'), /I fixed the jump/);
+  assert.throws(() => ai.logFile('../../etc'), /Bad job id/);
+  assert.throws(() => ai.logFile('1762000009999-9'), /No log/);
 });

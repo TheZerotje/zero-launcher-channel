@@ -92,8 +92,41 @@ class AiHelper {
     child.stdout.on('data', feed);
     child.stderr.on('data', (d) => { log.write(d); });
     child.on('error', (e) => onLine(`Could not start ${p.tool}: ${e.message}. Is it installed and signed in?`));
-    child.on('close', (code) => { this.jobs.delete(id); log.end(); onEnd && onEnd(code); });
+    child.on('close', (code) => {
+      this.jobs.delete(id); log.end();
+      try { fs.writeFileSync(path.join(dir, 'end.json'), JSON.stringify({ code, endedAt: new Date().toISOString() })); } catch {}
+      onEnd && onEnd(code);
+    });
     return { id, tool: p.tool, task: p.task };
+  }
+
+  // Past jobs (newest first) from the ai-runs folder.
+  history(limit = 30) {
+    let ids = [];
+    try { ids = fs.readdirSync(this.logRoot).filter((x) => AiHelper.ID_RE.test(x)); } catch { return []; }
+    ids.sort((a, b) => Number(b.split('-')[0]) - Number(a.split('-')[0]) || b.localeCompare(a));
+    return ids.slice(0, limit).map((id) => {
+      const read = (f) => { try { return JSON.parse(fs.readFileSync(path.join(this.logRoot, id, f), 'utf8')); } catch { return null; } };
+      const job = read('job.json') || {};
+      const end = read('end.json');
+      const status = this.jobs.has(id) ? 'running' : !end ? 'stopped' : end.code === 0 ? 'done' : 'failed';
+      return { id, tool: job.tool, task: job.task, said: job.said, cwd: job.cwd, startedAt: job.startedAt, endedAt: end && end.endedAt, code: end ? end.code : null, status };
+    });
+  }
+
+  logFile(id) {
+    if (!AiHelper.ID_RE.test(String(id))) throw new Error('Bad job id');
+    const f = path.join(this.logRoot, id, 'output.jsonl');
+    if (!fs.existsSync(f)) throw new Error('No log for this job');
+    return f;
+  }
+
+  // Readable text of a past job's log (last lines).
+  readLog(id, maxLines = 300) {
+    const f = this.logFile(id);
+    const job = this.history(1000).find((j) => j.id === id) || {};
+    const lines = fs.readFileSync(f, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => pretty(job.tool || 'claude', l)).filter(Boolean);
+    return lines.slice(-maxLines).join('\n');
   }
 
   // Stop only OUR job (and the processes it started), never anything else.
@@ -105,5 +138,7 @@ class AiHelper {
     return true;
   }
 }
+
+AiHelper.ID_RE = /^\d{10,16}-\d{1,6}$/;
 
 module.exports = { AiHelper, parse, commandFor, pretty, RULES };
