@@ -953,3 +953,23 @@ test('tester feedback: code round trip, bad or sneaky codes skipped, no doubles,
   assert.equal(store.remove(at, 'SAM-4F2A-9C1B'), 1); assert.equal(store.all().length, 1);
   assert.equal(({}).admin, undefined);
 });
+
+test('launcher log: one line per event, secrets blanked, never more than about 2 MB', () => {
+  const { Log, clean } = require('../core/log');
+  const dir = tmp(); const log = new Log(dir, { max: 2000 });
+  log.info('start 1.0'); log.warn('two\nlines'); log.error(new Error('boom'));
+  const lines = fs.readFileSync(path.join(dir, 'launcher.log'), 'utf8').trim().split('\n');
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /^\d{4}-\d\d-\d\dT[\d:.]+Z INFO  start 1\.0$/); assert.match(lines[1], /WARN  two lines$/); assert.match(lines[2], /ERROR boom$/);
+  const pem = '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIabc\n-----END PRIVATE KEY-----';
+  for (const s of [pem, 'push failed ghp_abcdefghijklmnopqrstuvwxyz0123', 'token=abc123secret', '{"password":"hunter2"}', 'github_pat_11ABCDEFGHIJKLMNOPQRSTUV_xyz']) {
+    assert.doesNotMatch(clean(s), /MC4CAQ|ghp_abc|abc123secret|hunter2|github_pat_11/, s);
+  }
+  assert.equal(clean('x'.repeat(9000)).length, 500);
+  for (let i = 0; i < 200; i++) log.info('line ' + i);
+  assert.ok(fs.existsSync(path.join(dir, 'launcher.old.log')), 'old file kept');
+  assert.ok(fs.statSync(path.join(dir, 'launcher.log')).size <= 2100);
+  assert.match(log.tail(), /line 199\n$/);
+  assert.ok(log.tail(300).length <= 300); assert.match(log.tail(300), /^\d{4}-/, 'starts at a whole line');
+  new Log(path.join(dir, 'launcher.log', 'nope')).info('x'); // a broken folder never throws
+});

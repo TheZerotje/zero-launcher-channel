@@ -29,6 +29,7 @@ const keybackup = require('../core/keybackup');
 const projects = require('../core/projects');
 const playtime = require('../core/playtime');
 const feedback = require('../core/feedback');
+const { Log } = require('../core/log');
 const CHECK_ITEMS = ['starts', 'sound', 'tested', 'notes', 'picture'];
 const CHECK_LABELS = { starts: 'The game starts', sound: 'No sound bugs', tested: 'Tested by a tester', notes: "What's new is written", picture: 'Picture is set' };
 let stats = null;
@@ -58,6 +59,8 @@ function settings() { return { ...DEFAULTS, ...readJson(file('settings.json'), {
 function developer() { return readJson(file('developer.json')); }
 function friendHost() { return readJson(file('friend.json')); }
 function account() { return readJson(file('account.json')); }
+let _log = null; // launcher log (core/log.js), on this PC only
+const log = () => _log || (_log = new Log(path.join(DATA(), 'logs')));
 const feedbackStore = () => new feedback.FeedbackStore(file('feedback.json'));
 function publicKey() {
   const s = settings();
@@ -217,7 +220,7 @@ async function refresh() {
   catalogueError = !r.error ? null
     : r.error.code === 'BAD_SIGNATURE' ? 'The game list failed the safety check, so it was not used.'
     : r.offline ? null : 'Could not load the game list. Are you online?';
-  if (r.error) console.error('[catalogue]', r.error.message);
+  if (r.error) log().warn(`game list: ${r.error.message}${r.offline ? ' (offline, using the saved list)' : ''}`);
   // Failed? Try again by itself after 1 min, then 5 min, then 30 min.
   clearTimeout(retryTimer);
   if (r.error) { failures++; retryTimer = setTimeout(refresh, retryDelay(failures)); } else failures = 0;
@@ -291,6 +294,7 @@ async function runInstall(gameId, job) {
       if (Date.now() - last > 250 || p.stage !== 'download') { last = Date.now(); send('state', state()); }
     },
   });
+  log().info(`${before ? 'updated' : 'installed'} ${gameId} ${rel.version}`);
   if (before && before.version !== rel.version) notify(tr('Update done'), tr('{name} is updated to version {v}.', { name: g.name || g.id, v: rel.version }));
 }
 
@@ -389,6 +393,9 @@ const api = {
   },
   reportText: (name) => fs.readFileSync(reportFile(name), 'utf8').slice(0, 200000),
   reportShow: (name) => { shell.showItemInFolder(reportFile(name)); return true; },
+  // ---- launcher log (on this PC only): copy it for Zero, or show the file ----
+  logCopy: () => { const text = log().tail(); require('electron').clipboard.writeText(text); return text.split('\n').filter(Boolean).length; },
+  logShow: () => { log().info('log opened'); shell.showItemInFolder(log().file); return true; },
   uninstall: async (id) => {
     const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['Uninstall', 'Cancel'], defaultId: 1, message: 'Uninstall this game?' });
     if (r.response !== 0) return false;
@@ -403,6 +410,7 @@ const api = {
     const isTest = !!(rel && rel.state === 'testing');
     installer.play(id, (code, err, ms) => {
       try { playtime.record(file('playtime.json'), id, err ? 0 : ms, { test: isTest }); } catch {}
+      if (crash.isCrash(code, ms, err)) log().warn(`game stopped early: ${id} ${version || ''} code ${err ? err.code || err.message : code}`);
       if (crash.isCrash(code, ms, err)) crashes.set(id, { code: err ? String(err.code || err.message) : code, version, at: new Date().toISOString() });
       send('state', state());
       if (catalogue && settings().autoUpdate) autoUpdate();
@@ -715,6 +723,7 @@ const SUB_ID = /^[a-z0-9][a-z0-9-]{1,40}--[a-z0-9][a-z0-9-]{1,40}--v?[0-9A-Za-z.
 const pid = (x) => V.match(x, projects.ID_RE, 'project id');
 const absPath = (x, what = 'folder') => { if (typeof x !== 'string' || x.length > 1000 || !path.isAbsolute(x) || x.includes('\0')) throw new Error('Bad input: ' + what); return x; };
 const CHECKS = {
+  logCopy: none, logShow: none,
   reportsList: none, reportText: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); }, reportShow: ([n, ...rest]) => { V.str(n, 'report', 80, { allowEmpty: false }); noMore(rest); },
   devProjects: none, devStatusReport: none,
   devProjectSave: ([id, patch, ...rest]) => {
@@ -798,12 +807,14 @@ const CHECKS = {
 
 for (const [name, fn] of Object.entries(api)) {
   ipcMain.handle('zl:' + name, async (e, ...args) => {
-    if (!win || e.senderFrame !== win.webContents.mainFrame) throw new Error('Not allowed');
-    if (name.startsWith('dev') && !developer()) throw new Error('Developer only');
-    if (name.startsWith('friend') && !friendHost()) throw new Error('Friend host only');
-    if (!CHECKS[name]) throw new Error('Not allowed');
-    CHECKS[name](args);
-    return fn(...args);
+    try {
+      if (!win || e.senderFrame !== win.webContents.mainFrame) throw new Error('Not allowed');
+      if (name.startsWith('dev') && !developer()) throw new Error('Developer only');
+      if (name.startsWith('friend') && !friendHost()) throw new Error('Friend host only');
+      if (!CHECKS[name]) throw new Error('Not allowed');
+      CHECKS[name](args);
+      return await fn(...args);
+    } catch (err) { log().warn(`${name}: ${err && err.message}`); throw err; } // the call name + why, never the input itself
   });
 }
 
@@ -853,11 +864,14 @@ else {
     const { session } = require('electron');
     for (const part of ['persist:arcade', 'persist:chatgpt']) lockDownSession(session.fromPartition(part));
     const s = settings();
+    log().info(`start ${app.getVersion()} on ${process.platform} ${require('os').release()} as ${viewer().role}`);
+    process.on('uncaughtExceptionMonitor', (err) => log().error(`crash: ${err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : err}`));
     installer = new Installer(s.installRoot || path.join(DATA(), 'library'));
     queue = new DownloadQueue(runInstall, () => send('state', state()));
     queue.onError = (id, e) => {
       const g = catalogue && catalogue.games.find((x) => x.id === id);
       const name = (g && g.name) || id;
+      log().error(`download ${id}: ${e.message}`);
       if (e.code === 'NO_SPACE') send('toast', { kind: 'error', name, text: 'Not enough free space. This game needs about {need} MB. You have {free} MB free.', vars: { need: Math.ceil(e.need / 1048576), free: Math.ceil(e.free / 1048576) } });
       else send('toast', { kind: 'error', name, text: e.message });
     };

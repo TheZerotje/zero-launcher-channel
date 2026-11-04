@@ -406,7 +406,12 @@ P.reports = () => {
           h('button', { class: 'ghost small', onclick: () => (openReport && openReport.name === r.name ? (openReport = null, render()) : show(r)) }, openReport && openReport.name === r.name ? t('Hide') : t('Show')),
           h('button', { class: 'btn small', onclick: async () => { await call('copy', await call('reportText', r.name)); toast(t('Copied. Now paste it to Zero.')); } }, t('Copy')),
           h('button', { class: 'ghost small', onclick: () => call('reportShow', r.name) }, t('Show in folder')))),
-      openReport && openReport.name === r.name ? h('pre', { class: 'log small report-text' }, openReport.text) : null))];
+      openReport && openReport.name === r.name ? h('pre', { class: 'log small report-text' }, openReport.text) : null)),
+    h('div', { class: 'panel launcher-log' }, h('h3', {}, t('Launcher log')),
+      h('p', { class: 'dim' }, t('A list of what the launcher did. It stays on this PC. Only copy it if Zero asks for it.')),
+      h('div', { class: 'row' },
+        h('button', { class: 'ghost small', onclick: async () => { const n = await call('logCopy'); toast(n ? t('Copied. Now paste it to Zero.') : t('The log is empty.')); } }, t('Copy launcher log')),
+        h('button', { class: 'ghost small', onclick: () => call('logShow') }, t('Show in folder'))))];
 };
 
 // ---- developer ----

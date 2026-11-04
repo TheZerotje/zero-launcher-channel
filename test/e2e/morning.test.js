@@ -144,3 +144,25 @@ test('tester feedback: stars + one line -> code; Zero pastes it in Testers and s
     assert.deepEqual(errors, []);
   } finally { await close(app); }
 });
+
+test('launcher log: things are written down on this PC; Copy launcher log; no secrets, no input text', async () => {
+  const demo = makeDemo();
+  const { app, win, errors } = await launch(demo.user);
+  try {
+    await win.locator('.card').first().waitFor();
+    await tryCall(win, 'reportText', '../secret-words-here');
+    await tryCall(win, 'devProjects');
+    await goto(win, 'My reports');
+    const box = win.locator('.panel.launcher-log');
+    await box.locator('button', { hasText: 'Copy launcher log' }).click();
+    await win.locator('.toast', { hasText: 'Copied' }).waitFor();
+    const text = await app.evaluate(({ clipboard }) => clipboard.readText());
+    assert.match(text, /INFO  start .* as user/);
+    assert.match(text, /WARN  reportText: Bad input/);
+    assert.match(text, /WARN  devProjects: Developer only/);
+    assert.doesNotMatch(text, /secret-words-here/, 'what you typed is never written down');
+    assert.ok(fs.existsSync(path.join(demo.user, 'logs', 'launcher.log')));
+    await shot(win, 'player-launcher-log');
+    assert.deepEqual(errors, []);
+  } finally { await close(app); }
+});
