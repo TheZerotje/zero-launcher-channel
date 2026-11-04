@@ -754,3 +754,152 @@ test('player settings: download speed limit, move game safely, uninstall questio
   assert.match(nsh, /\/SD IDNO/); assert.match(nsh, /IfSilent/); assert.match(nsh, /isUpdated/);
   assert.equal(require('../package.json').build.nsis.include, 'build/installer.nsh');
 });
+
+test('projects: seed merges games + other projects, scrapped from notes go to the graveyard', () => {
+  const P = require('../core/projects');
+  const hubSeed = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app', 'data', 'hub-seed.json'), 'utf8'));
+  const projectsSeed = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app', 'data', 'projects-seed.json'), 'utf8'));
+  const list = P.seedList({ hubSeed, projectsSeed, hubProjects: [{ id: 'railrove', name: 'Railrove', path: '/x/rr' }] });
+  const by = (id) => list.find((p) => p.id === id);
+  assert.ok(by('pop-storm') && by('pop-storm').type === 'web', 'games stay');
+  assert.equal(by('world-engine').type, 'dnd', 'project seed wins over the game seed');
+  assert.ok(by('railrove').folders.includes('E:\\Dustrunner') && by('railrove').folders.includes('/x/rr'));
+  assert.equal(by('roblox-shape-army').type, 'roblox');
+  assert.equal(by('repo-emberwild').stage, 'unknown');
+  const graveyard = list.filter((p) => p.stage === 'scrapped').map((p) => p.name).sort();
+  assert.deepEqual(graveyard, ['Cryptogram', 'Glowcube Gardens', 'Junkyard Jingles', 'Lantern Road', 'Mall-ien Empire']);
+  assert.ok(!JSON.stringify(list).includes("Alex"), 'Lantern Road is shown only by that name');
+  for (const p of list) { assert.match(p.id, P.ID_RE); assert.ok([1, 2, 3].includes(p.priority)); assert.ok(Array.isArray(p.history)); }
+});
+
+test('projects: forgotten days by priority, waiting on you, default view, filters', () => {
+  const P = require('../core/projects');
+  const now = Date.parse('2026-11-20T12:00:00Z');
+  const ago = (d) => new Date(now - d * 86400000).toISOString();
+  const mk = (id, priority, days, stage = 'building', extra = {}) => ({ id, name: id, type: 'pc', stage, priority, folders: [], waitingOn: 'nobody', nextStep: 'n-' + id, lastTouched: ago(days), history: [], ...extra });
+  const list = [mk('p1-6', 1, 6), mk('p1-7', 1, 7), mk('p2-13', 2, 13), mk('p2-14', 2, 14), mk('p3-29', 3, 29), mk('p3-40', 3, 40),
+    mk('hold', 1, 99, 'on-hold'), mk('rel', 1, 99, 'released'), mk('dead', 1, 99, 'scrapped'), mk('wait', 2, 1, 'needs-playtest', { waitingOn: 'zero' }),
+    mk('relfix', 2, 1, 'released', { needsWork: 'crash on start' }), mk('deadwait', 2, 1, 'scrapped', { waitingOn: 'zero' })];
+  const f = P.forgotten(list, now).map((x) => x.id);
+  assert.deepEqual(f.sort(), ['p1-7', 'p2-14', 'p3-40'].sort());
+  assert.equal(P.forgotten(list, now).find((x) => x.id === 'p3-40').days, 40);
+  assert.deepEqual(P.waitingOnYou(list).map((x) => x.id), ['wait']);
+  const v = P.visible(list).map((p) => p.id);
+  assert.ok(v.includes('relfix') && !v.includes('rel') && !v.includes('dead') && !v.includes('deadwait'));
+  assert.ok(!P.visible(list, { stage: 'scrapped' }).length, 'scrapped never shows in the list, only in the graveyard');
+  assert.deepEqual(P.visible(list, { q: 'n-wait' }).map((p) => p.id), ['wait']);
+  assert.deepEqual(P.visible(list, { priority: 3 }).map((p) => p.id), ['p3-29', 'p3-40']);
+  assert.deepEqual(P.visible(list, { waitingOn: 'zero' }).map((p) => p.id), ['wait']);
+  // review: most forgotten first, max 10, no scrapped, no released unless needs work
+  const big = [...list, ...Array.from({ length: 12 }, (_, i) => mk('x' + i, 2, i))];
+  const q = P.reviewQueue(big, now);
+  assert.equal(q.length, 10);
+  assert.equal(q[0].id, 'hold');
+  assert.ok(!q.some((x) => x.id === 'dead' || x.id === 'rel'));
+  // reminder: once a day, only when something is forgotten
+  assert.deepEqual(P.reminderDue(null, 2, now), { key: '2026-11-20', show: true });
+  assert.equal(P.reminderDue('2026-11-20', 2, now), null);
+  assert.equal(P.reminderDue('2026-11-19', 0, now).show, false);
+});
+
+test('projects: scrap hides everywhere, needs a reason, never deletes files; only bringBack un-scraps', () => {
+  const P = require('../core/projects');
+  const weekly = require('../core/weekly');
+  const dir = tmp(); const folder = path.join(dir, 'Game'); fs.mkdirSync(folder); fs.writeFileSync(path.join(folder, 'a.txt'), 'keep me');
+  const store = new P.ProjectStore(path.join(dir, 'projects.json'), { hubSeed: { games: [] }, projectsSeed: { projects: [
+    { id: 'alpha', name: 'Alpha', type: 'pc', stage: 'building', folders: [folder], priority: 1 },
+    { id: 'beta', name: 'Beta', type: 'web', stage: 'needs-playtest', waitingOn: 'zero' }] } });
+  const now = Date.parse('2026-12-01T10:00:00Z');
+  store.load(now);
+  assert.throws(() => store.scrap('alpha', '  ', now), /why/);
+  store.scrap('alpha', 'Not fun anymore', now);
+  assert.ok(fs.existsSync(path.join(folder, 'a.txt')), 'files are never deleted');
+  let d = store.load();
+  const a = d.projects.find((p) => p.id === 'alpha');
+  assert.equal(a.stage, 'scrapped'); assert.equal(a.scrapReason, 'Not fun anymore'); assert.match(a.history.pop().what, /Scrapped/);
+  assert.ok(!P.visible(d.projects).some((p) => p.id === 'alpha'));
+  assert.ok(!P.forgotten(d.projects, now + 99 * 86400000).some((p) => p.id === 'alpha'));
+  assert.ok(!P.reviewQueue(d.projects, now).some((p) => p.id === 'alpha'));
+  assert.ok(P.weekAllowed(d.projects).blocked.has('alpha'));
+  const hub = { games: [{ id: 'alpha', name: 'Alpha', status: 'testing' }, { id: 'beta', name: 'Beta', status: 'testing' }] };
+  const allowed = P.weekAllowed(d.projects);
+  const plan = weekly.suggest({ games: hub.games.filter((g) => !allowed.blocked.has(g.id)) }, []);
+  assert.ok(!JSON.stringify(plan).includes('Alpha'), 'never in This week');
+  assert.throws(() => store.update('alpha', { stage: 'building' }), /Bring it back first/);
+  assert.throws(() => store.update('beta', { stage: 'scrapped' }), /Scrap project/);
+  // scrapped launcher game: warning (website state is only read, never changed)
+  const st = P.status(a, { site: { states: { alpha: 'released' } }, channel: { games: [{ id: 'alpha', releases: [{ version: '1.0', state: 'released' }] }] } });
+  assert.ok(st.warnings.some((w) => /remember to also hide it on the website/.test(w)));
+  assert.deepEqual(st.facts.channel.value, { released: ['1.0'] });
+  assert.equal(st.facts.siteState.source, 'website releases.json (read only)');
+  store.bringBack('alpha', now + 1000);
+  d = store.load();
+  const back = d.projects.find((p) => p.id === 'alpha');
+  assert.equal(back.stage, 'building'); assert.ok(!back.scrapReason); assert.match(back.history.pop().what, /Brought back by Zero/);
+  assert.throws(() => store.bringBack('alpha'), /not scrapped/);
+  // quick review saves each choice in history; the week plan then only uses "Keep going"
+  store.review('beta', 'keep', { weekKey: '2026-11-27' }, now);
+  store.review('alpha', 'pause', { weekKey: '2026-11-27' }, now);
+  d = store.load();
+  assert.equal(d.projects.find((p) => p.id === 'alpha').stage, 'on-hold');
+  assert.match(d.projects.find((p) => p.id === 'beta').history.pop().what, /Keep going/);
+  assert.deepEqual(d.reviews['2026-11-27'].done, ['beta', 'alpha']);
+  const w = P.weekAllowed(d.projects);
+  assert.ok(w.ok.has('beta') && w.blocked.has('alpha') && w.reviewed);
+  assert.throws(() => store.review('beta', 'scrap', {}, now), /why/, 'scrap in review also needs a reason');
+  store.review('beta', 'scrap', { reason: 'Too big' }, now);
+  assert.equal(store.load().projects.find((p) => p.id === 'beta').stage, 'scrapped');
+  // atomic file: no temp files left
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+});
+
+test('projects: exact status is read only; new folder suggestions skip known, ignored and system folders', () => {
+  const P = require('../core/projects');
+  const root = tmp();
+  const g = path.join(root, 'Kindle'); fs.mkdirSync(path.join(g, 'build'), { recursive: true });
+  fs.writeFileSync(path.join(g, 'project.godot'), 'config/name="Kindle"\nconfig/version="0.3"\n');
+  fs.writeFileSync(path.join(g, 'build', 'Kindle.exe'), 'x');
+  const node = path.join(root, 'Tool'); fs.mkdirSync(node); fs.writeFileSync(path.join(node, 'package.json'), '{"version":"2.1.0"}');
+  const rbx = path.join(root, 'Robloxy'); fs.mkdirSync(rbx); fs.writeFileSync(path.join(rbx, 'place.rbxlx'), '<roblox/>');
+  const snap = () => JSON.stringify(fs.readdirSync(root, { recursive: true }).sort().map((f) => [f, fs.statSync(path.join(root, f)).mtimeMs]));
+  const before = snap();
+  const p = (folders) => ({ id: 'x', stage: 'building', folders, lastTouched: '2026-01-01T00:00:00Z' });
+  const s1 = P.status(p([g, path.join(root, 'Gone')]));
+  assert.equal(s1.facts.version.value, '0.3'); assert.match(s1.facts.version.source, /godot/);
+  assert.match(s1.facts.lastBuild.value.exe, /Kindle\.exe$/);
+  assert.match(s1.facts.changed.source, /^folder /);
+  assert.ok(s1.warnings.some((w) => /^Folder not found/.test(w)));
+  assert.ok(s1.lastChange > '2026-01-01');
+  assert.equal(P.status(p([node])).facts.version.value, '2.1.0');
+  assert.equal(P.status(p([node])).facts.version.source, 'package.json');
+  assert.equal(P.status(p([rbx])).facts.robloxFile.value.file, 'place.rbxlx');
+  assert.equal(snap(), before, 'status never changes anything in the folders');
+  // new folders: top level only
+  for (const n of ['$RECYCLE.BIN', 'System Volume Information', 'Windows', '.hidden', 'NewGame', 'IgnoreMe', 'Games']) fs.mkdirSync(path.join(root, n), { recursive: true });
+  fs.mkdirSync(path.join(root, 'Games', 'Deep')); fs.writeFileSync(path.join(root, 'file.txt'), 'x');
+  const list = [{ folders: [g, node, rbx, path.join(root, 'Games', 'Deep')] }];
+  const found = P.newFolders([root, path.join(root, 'nope')], list, [path.join(root, 'IgnoreMe')]).map((x) => x.name);
+  assert.deepEqual(found, ['NewGame']);
+  let deep = 0;
+  P.newFolders([root], list, [], (d) => { deep++; return fs.readdirSync(d, { withFileTypes: true }); });
+  assert.equal(deep, 1, 'only the top folder is read');
+  // report: html is escaped, markdown has every box
+  const rep = P.report([{ id: 'a', name: '<b>x</b>', type: 'web', stage: 'building', priority: 1, waitingOn: 'zero', nextStep: 'go', folders: [], lastTouched: '2026-01-01T00:00:00Z' }], Date.parse('2026-02-01T00:00:00Z'));
+  assert.ok(!rep.html.includes('<b>x</b>') && rep.html.includes('&lt;b&gt;x&lt;/b&gt;'));
+  for (const s of ['Waiting on you (1)', "Don't forget (1)", 'Web game (1)', 'Scrapped this week (0)']) assert.ok(rep.markdown.includes(s), s);
+});
+
+test('projects: archive zip keeps the original folder and refuses a target inside it', async () => {
+  const P = require('../core/projects');
+  const root = tmp(); const src = path.join(root, 'Old Game'); fs.mkdirSync(path.join(src, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'sub', 'a.txt'), 'hello');
+  await assert.rejects(P.archiveFolder(src, path.join(src, 'zips'), 'Old Game'), /outside the project folder/);
+  const now = Date.parse('2026-11-04T00:00:00Z');
+  const f1 = await P.archiveFolder(src, path.join(root, 'Archive'), 'Old Game', now);
+  const f2 = await P.archiveFolder(src, path.join(root, 'Archive'), 'Old Game', now);
+  assert.equal(path.basename(f1), 'old-game-2026-11-04.zip'); assert.equal(path.basename(f2), 'old-game-2026-11-04-2.zip');
+  assert.equal(fs.readFileSync(path.join(src, 'sub', 'a.txt'), 'utf8'), 'hello', 'original untouched');
+  const out = path.join(root, 'unzipped');
+  await require('../core/zip').unpack(f1, out);
+  assert.equal(fs.readFileSync(path.join(out, 'sub', 'a.txt'), 'utf8'), 'hello');
+});
