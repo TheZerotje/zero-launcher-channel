@@ -33,9 +33,17 @@ async function fetchBytes(url) {
   return Buffer.concat(chunks);
 }
 
+// Wait so the speed stays under the limit. limit = bytes per second (0 / null = no limit).
+async function throttle(startedAt, bytesThisRun, limit) {
+  if (!limit) return;
+  const shouldTake = (bytesThisRun / limit) * 1000;
+  const took = Date.now() - startedAt;
+  if (shouldTake > took) await new Promise((r) => setTimeout(r, Math.min(shouldTake - took, 2000)));
+}
+
 // Download to a file with resume support. onProgress(done, total).
-// signal: { cancelled: bool } to pause.
-async function downloadTo(url, dest, { onProgress, signal } = {}) {
+// signal: { cancelled: bool } to pause. maxBytesPerSec: number or function (read live, so a change applies at once).
+async function downloadTo(url, dest, { onProgress, signal, maxBytesPerSec } = {}) {
   let start = 0;
   try { start = fs.statSync(dest).size; } catch {}
   const res = await get(url, start ? { Range: `bytes=${start}-` } : {});
@@ -48,16 +56,21 @@ async function downloadTo(url, dest, { onProgress, signal } = {}) {
   const total = start + Number(res.headers['content-length'] || 0);
   const out = fs.createWriteStream(dest, { flags: start ? 'a' : 'w' });
   let done = start;
+  const t0 = Date.now(); let thisRun = 0; let lastLimit = null; let tStart = t0;
   try {
     for await (const chunk of res) {
       if (signal && signal.cancelled) { res.destroy(); const e = new Error('Paused'); e.code = 'PAUSED'; throw e; }
       if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
       done += chunk.length;
       if (onProgress) onProgress(done, total);
+      const limit = typeof maxBytesPerSec === 'function' ? maxBytesPerSec() : maxBytesPerSec;
+      if (limit !== lastLimit) { lastLimit = limit; tStart = Date.now(); thisRun = 0; } // limit changed: start counting again
+      thisRun += chunk.length;
+      await throttle(tStart, thisRun, limit);
     }
   } finally {
     await new Promise((r) => out.end(r));
   }
 }
 
-module.exports = { get, fetchBytes, downloadTo };
+module.exports = { get, fetchBytes, downloadTo, throttle };

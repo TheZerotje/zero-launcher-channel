@@ -15,6 +15,15 @@ const { unpack } = require('./zip');
 const { resolveFileUrl, ID_RE } = require('./catalogue');
 const { writeJsonAtomic } = require('./fsutil');
 
+function listAll(dir, base = dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const f = path.join(dir, e.name);
+    if (e.isSymbolicLink()) continue;
+    if (e.isDirectory()) listAll(f, base, out); else if (e.isFile()) out.push(path.relative(base, f));
+  }
+  return out;
+}
+
 // Split "a b \"c d\"" into ['a', 'b', 'c d'].
 function splitArgs(text) {
   const out = []; let cur = ''; let q = null; let any = false;
@@ -86,7 +95,7 @@ class Installer {
   }
 
   // Install (or update to) a release. Old version stays until the new one is ready.
-  async install(channelSource, game, release, { onProgress, signal } = {}) {
+  async install(channelSource, game, release, { onProgress, signal, maxBytesPerSec } = {}) {
     if (game.kind !== 'pc') throw new Error('Only PC games can be installed');
     if (!ID_RE.test(game.id)) throw new Error('Bad game id');
     const report = (stage, done = 0, total = 0) => onProgress && onProgress({ stage, done, total });
@@ -97,7 +106,7 @@ class Installer {
     this.checkSpace(release.file.size || 0, have);
 
     report('download');
-    await this._fetch(src, part, { onProgress: (d, t) => report('download', d, t || release.file.size), signal });
+    await this._fetch(src, part, { onProgress: (d, t) => report('download', d, t || release.file.size), signal, maxBytesPerSec });
 
     report('check');
     const sum = await sha256File(part);
@@ -109,7 +118,9 @@ class Installer {
     }
 
     report('unpack');
-    const finalDir = path.join(this.gamesDir, game.id, release.version);
+    const prev = this.installed()[game.id];
+    const base = prev && prev.base ? prev.base : this.gamesDir; // a moved game keeps its new folder
+    const finalDir = path.join(base, game.id, release.version);
     const tmpDir = finalDir + '.installing';
     fs.rmSync(tmpDir, { recursive: true, force: true });
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -141,6 +152,8 @@ class Installer {
     if (this.running.has(gameId)) throw new Error('Close the game first');
     const state = this.installed();
     fs.rmSync(path.join(this.gamesDir, gameId), { recursive: true, force: true });
+    const base = state[gameId] && state[gameId].base;
+    if (base && path.isAbsolute(base)) fs.rmSync(path.join(base, gameId), { recursive: true, force: true }); // moved game
     for (const f of fs.readdirSync(this.dlDir)) if (f.startsWith(gameId + '-')) fs.rmSync(path.join(this.dlDir, f), { force: true });
     delete state[gameId];
     this._save(state);
@@ -178,6 +191,49 @@ class Installer {
   }
 
   isRunning(gameId) { return this.running.has(gameId); }
+
+  // Move an installed game to another folder: copy, check every file, switch, THEN remove the old copy.
+  // If anything fails, the copy is removed and the game stays where it was.
+  async moveGame(gameId, newBase) {
+    if (!ID_RE.test(gameId)) throw new Error('Bad game id');
+    if (this.running.has(gameId)) throw new Error('Close the game first');
+    const state = this.installed();
+    const info = state[gameId];
+    if (!info) throw new Error('Game is not installed');
+    if (!path.isAbsolute(newBase) || !fs.existsSync(newBase) || !fs.statSync(newBase).isDirectory()) throw new Error('Pick a folder');
+    const from = path.resolve(info.dir);
+    const to = path.resolve(newBase, gameId, info.version);
+    if (to === from) throw new Error('The game is already in that folder');
+    const rel = path.relative(from, path.resolve(newBase));
+    if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) throw new Error('Pick a folder outside the game folder');
+    const files = listAll(from);
+    let size = 0; for (const f of files) size += fs.statSync(path.join(from, f)).size;
+    const free = (() => { try { const st = fs.statfsSync(newBase); return st.bavail * st.bsize; } catch { return Infinity; } })();
+    if (free < size + 50 * 1048576) throw new Error(`Not enough free space there. The game needs about ${Math.ceil(size / 1048576)} MB.`);
+    const tmp = to + '.moving';
+    fs.rmSync(tmp, { recursive: true, force: true });
+    try {
+      for (const f of files) {
+        fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true });
+        fs.copyFileSync(path.join(from, f), path.join(tmp, f));
+      }
+      for (const f of files) { // check: same size and same content
+        const a = path.join(from, f), b = path.join(tmp, f);
+        if (fs.statSync(a).size !== fs.statSync(b).size || (await sha256File(a)) !== (await sha256File(b))) throw new Error('Copy check failed for ' + f);
+      }
+      if (fs.existsSync(to)) throw new Error('There is already a game folder there');
+      fs.renameSync(tmp, to);
+    } catch (e) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      throw e;
+    }
+    const st = this.installed();
+    st[gameId] = { ...st[gameId], dir: to, base: path.resolve(newBase) };
+    this._save(st);
+    fs.rmSync(from, { recursive: true, force: true }); // only now, after the new copy is checked and saved
+    try { fs.rmdirSync(path.dirname(from)); } catch {} // remove the empty game folder, if empty
+    return st[gameId];
+  }
 }
 
 module.exports = { Installer, splitArgs };

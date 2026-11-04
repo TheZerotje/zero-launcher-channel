@@ -117,3 +117,14 @@ Zero was asleep. When something was unclear I picked the safest simple option an
     Posts never ping @everyone or anyone else.
 40. **Ctrl+K** (developer): jump to any page or game. Typing "claude, …" or "codex, …" and Enter opens the AI helper
     and starts it in the first AI folder from developer.json.
+41. **Start with Windows (players)** is OFF by default. When on, the launcher starts hidden in the tray, and closing
+    the window keeps it in the tray (like for Zero). Turning it off goes back to "close = quit".
+42. **Download speed limit**: No limit / 5 / 2 / 1 MB/s. A change works at once, also during a download. It only
+    limits web downloads (a local folder channel is copied at full speed).
+43. **Move game**: copy to `<picked folder>\<game>\<version>`, check every file (size + SHA-256), save the new place,
+    and only then remove the old copy. If anything fails, the half copy is removed and the game stays where it was.
+    Later updates of that game install in the new folder too. Uninstall removes it from the new folder.
+44. **Launcher uninstall (Windows)** asks "Also remove installed games?" with No as the default. It never asks (and
+    never removes games) during an update or a silent uninstall. "Yes" removes only the launcher's own game folder
+    (%APPDATA%\Zero Launcher\library); games moved to another folder stay. The script is build/installer.nsh; the
+    Windows CI build checks that it compiles.

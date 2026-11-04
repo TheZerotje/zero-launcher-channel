@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { generateKeyPair } = require('../core/signing');
 const { Channel } = require('../core/publisher');
 const { loadChannel, playerView, currentRelease } = require('../core/catalogue');
@@ -701,4 +702,49 @@ test('developer power 2: download counts (cached 10 min), Discord post rules, ke
   assert.equal(backupWarningDue({ lastWarning: '2026-11-01T00:00:00Z', now }), false, 'once a month');
   assert.equal(backupWarningDue({ lastBackup: '2026-10-20T00:00:00Z', now }), false);
   assert.equal(backupWarningDue({ lastBackup: '2026-09-01T00:00:00Z', lastWarning: '2026-09-20T00:00:00Z', now }), true);
+});
+
+test('player settings: download speed limit, move game safely, uninstall question', async () => {
+  const { downloadTo } = require('../core/net');
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'big.bin'), crypto.randomBytes(300000));
+  const srv = await serve(dir);
+  try {
+    const url = `http://127.0.0.1:${srv.address().port}/big.bin`;
+    let t0 = Date.now();
+    await downloadTo(url, path.join(dir, 'fast.bin'));
+    const fast = Date.now() - t0;
+    t0 = Date.now();
+    await downloadTo(url, path.join(dir, 'slow.bin'), { maxBytesPerSec: () => 150000 });
+    const slow = Date.now() - t0;
+    assert.ok(slow >= 1500, `limited download took ${slow} ms`);
+    assert.ok(fast < slow);
+    assert.equal(fs.readFileSync(path.join(dir, 'slow.bin')).compare(fs.readFileSync(path.join(dir, 'big.bin'))), 0);
+  } finally { srv.close(); }
+
+  // move game
+  const root = tmp(), other = tmp();
+  const inst = new Installer(path.join(root, 'lib'));
+  const gdir = path.join(inst.gamesDir, 'mover', '1.0');
+  fakeBuild(gdir, 'm');
+  inst._save({ mover: { version: '1.0', exe: 'TestGame.exe', dir: gdir } });
+  await assert.rejects(inst.moveGame('mover', gdir), /outside the game folder/);
+  fs.mkdirSync(path.join(other, 'mover', '1.0'), { recursive: true }); // something already there
+  await assert.rejects(inst.moveGame('mover', other), /already a game folder/);
+  assert.ok(fs.existsSync(path.join(gdir, 'TestGame.exe')), 'old copy kept when the move fails');
+  assert.ok(!fs.existsSync(path.join(other, 'mover', '1.0.moving')), 'half copy removed');
+  fs.rmSync(path.join(other, 'mover'), { recursive: true });
+  const r = await inst.moveGame('mover', other);
+  assert.equal(r.dir, path.join(other, 'mover', '1.0'));
+  assert.ok(fs.existsSync(path.join(r.dir, 'data', 'game.pck')));
+  assert.ok(!fs.existsSync(gdir), 'old copy removed after the check');
+  assert.equal(inst.installed().mover.base, path.resolve(other));
+  inst.uninstall('mover');
+  assert.ok(!fs.existsSync(path.join(other, 'mover')), 'uninstall removes the moved game');
+
+  const nsh = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
+  assert.match(nsh, /Also remove installed games\?/);
+  assert.match(nsh, /MB_DEFBUTTON2/, 'default answer is No');
+  assert.match(nsh, /\/SD IDNO/); assert.match(nsh, /IfSilent/); assert.match(nsh, /isUpdated/);
+  assert.equal(require('../package.json').build.nsis.include, 'build/installer.nsh');
 });

@@ -240,3 +240,40 @@ test('developer power 2: download numbers, release checklist, Discord preview, k
     await win.locator('#ai-log', { hasText: '> claude, fix the jump bug' }).waitFor();
   } finally { await close(app); }
 });
+
+test('player settings: start with Windows (off by default), speed limit, move game', async () => {
+  const demo = makeDemo();
+  const newHome = path.join(demo.dir, 'D-drive'); fs.mkdirSync(newHome);
+  const { app, win } = await launch(demo.user);
+  try {
+    await app.evaluate(({ dialog }, f) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [f] }); dialog.showMessageBox = async () => ({ response: 0 }); }, newHome);
+    await goto(win, 'Settings');
+    const sw = win.locator('label.switch', { hasText: 'Start Zero Launcher with Windows' }).locator('input');
+    assert.equal(await sw.isChecked(), false, 'off by default');
+    await sw.check();
+    await win.selectOption('#set-speed', '2');
+    await win.waitForTimeout(300);
+    const s = JSON.parse(fs.readFileSync(path.join(demo.user, 'settings.json'), 'utf8'));
+    assert.equal(s.startWithWindows, true); assert.equal(s.speedLimit, 2);
+    const bad = await win.evaluate(() => window.zl.call('setSetting', 'speedLimit', 99).then(() => 'ok', (e) => e.message));
+    assert.match(bad, /Not allowed/);
+    await shot(win, 'player-settings-start-speed');
+    // move game
+    await goto(win, 'Store');
+    await win.locator('.card b', { hasText: 'Railrove' }).first().click();
+    await win.locator('.game-info button', { hasText: 'Install' }).click();
+    await win.locator('button', { hasText: 'Move game to another folder' }).waitFor({ timeout: 20000 });
+    await win.locator('button', { hasText: 'Move game to another folder' }).click();
+    await win.locator('.toast', { hasText: 'Game moved' }).waitFor();
+    const inst = JSON.parse(fs.readFileSync(path.join(demo.user, 'library', 'installed.json'), 'utf8')).railrove;
+    assert.equal(inst.dir, path.join(newHome, 'railrove', '0.19.12.0'));
+    assert.ok(fs.existsSync(path.join(inst.dir, 'Game.exe')));
+    assert.ok(!fs.existsSync(path.join(demo.user, 'library', 'games', 'railrove', '0.19.12.0')));
+    await win.locator('p.dim', { hasText: newHome }).first().waitFor();
+    await shot(win, 'player-game-moved');
+    // closing the window keeps it in the tray now (window hides, app keeps running)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await win.waitForTimeout(300);
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+  } finally { await close(app); }
+});

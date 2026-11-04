@@ -312,7 +312,9 @@ P.game = () => {
     g.kind === 'pc' && g.installed ? h('div', { class: 'panel' }, h('h3', {}, t('Fix the game')),
       h('p', { class: 'dim' }, t('Game not starting or looks broken? Repair downloads it again and checks every file.')),
       h('div', { class: 'row' }, h('button', { class: 'ghost', disabled: !!g.job || g.running, onclick: () => call('repair', g.id).then(() => toast(t('Repair started'))) }, t('Repair')),
-        h('button', { class: 'ghost', disabled: !!g.job || g.running, onclick: () => call('uninstall', g.id) }, t('Uninstall')))) : null,
+        h('button', { class: 'ghost', disabled: !!g.job || g.running, onclick: async () => { const d = await call('moveGame', g.id); if (d) toast(t('Game moved')); } }, t('Move game to another folder')),
+        h('button', { class: 'ghost', disabled: !!g.job || g.running, onclick: () => call('uninstall', g.id) }, t('Uninstall'))),
+      h('p', { class: 'dim' }, t('Game folder: {dir}', { dir: g.installed.dir }))) : null,
     box,
   ];
 };
@@ -331,7 +333,11 @@ P.settings = () => {
             h('button', { class: 'btn', onclick: async () => { await call('makeAccount', $('#accName').value); toast(t('Account made')); } }, t('Make account')))]),
     h('div', { class: 'panel' }, h('h3', {}, t('Updates')),
       onOff(st.autoUpdate, (e) => setS('autoUpdate', e.target.checked), t('Update games by themselves (recommended)')),
-      onOff(st.notify !== false, (e) => setS('notify', e.target.checked), t('Show a Windows message when an update is done or a new test version is ready'))),
+      onOff(st.notify !== false, (e) => setS('notify', e.target.checked), t('Show a Windows message when an update is done or a new test version is ready')),
+      h('label', { class: 'inline' }, t('Download speed'), h('select', { id: 'set-speed', onchange: (e) => setS('speedLimit', Number(e.target.value)) },
+        [[0, t('No limit')], [5, '5 MB/s'], [2, '2 MB/s'], [1, '1 MB/s']].map(([v, l]) => h('option', { value: v, selected: (st.speedLimit || 0) === v }, l))))),
+    h('div', { class: 'panel' }, h('h3', {}, t('Start')),
+      onOff(!!st.startWithWindows, (e) => setS('startWithWindows', e.target.checked), t('Start Zero Launcher with Windows (small, in the tray)'))),
     h('div', { class: 'panel' }, h('h3', {}, t('Easy to read')),
       h('label', { class: 'inline' }, t('Text size'), h('select', { id: 'set-size', onchange: (e) => setS('textSize', e.target.value) },
         [['normal', t('Normal')], ['big', t('Big')], ['bigger', t('Bigger')]].map(([v, l]) => h('option', { value: v, selected: (st.textSize || 'normal') === v }, l)))),

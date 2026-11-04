@@ -46,6 +46,7 @@ const { V } = require('../core/validate');
 let win = null, tray = null, installer = null, ai = null, lastHub = null;
 let catalogue = null, catalogueError = null, lastCheck = null, offline = false, failures = 0, retryTimer = null;
 let queue = null; // downloads: one at a time (core/queue.js)
+let speedLimitMB = 0;      // download speed limit in MB/s (0 = no limit), from Settings
 const crashes = new Map(); // gameId -> { code, version, at } (until the player answers)
 const MUTED = !!process.env.ZL_MUTE;
 global.zlNotices = []; // every notification we showed (tests read this)
@@ -209,6 +210,7 @@ async function runInstall(gameId, job) {
   let last = 0;
   await installer.install(channelSource(), g, rel, {
     signal: job.signal,
+    maxBytesPerSec: () => speedLimitMB * 1048576,
     onProgress: (p) => {
       Object.assign(job, p);
       if (Date.now() - last > 250 || p.stage !== 'download') { last = Date.now(); send('state', state()); }
@@ -328,11 +330,25 @@ const api = {
     if (!shell.writeShortcutLink(plan.file, 'create', plan.options)) throw new Error('Could not make the shortcut');
     return plan.file;
   },
+  moveGame: async (id) => {
+    if (queue.get(id)) throw new Error('Wait for the download to finish, or press Cancel');
+    if (!installer.installed()[id]) throw new Error('Game is not installed');
+    const pick = await dialog.showOpenDialog(win, { title: 'Pick the new folder for this game', properties: ['openDirectory', 'createDirectory'] });
+    if (pick.canceled || !pick.filePaths[0]) return null;
+    const r = await installer.moveGame(id, pick.filePaths[0]);
+    send('state', state());
+    return r.dir;
+  },
   setLaunchArgs: (id, text) => { const r = installer.setLaunchArgs(id, text); send('state', state()); return r; },
   setSetting: (k, v) => {
-    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'] };
+    const ok = { autoUpdate: 'boolean', notify: 'boolean', easyFont: 'boolean', startWithWindows: 'boolean', textSize: ['normal', 'big', 'bigger'], lang: ['en', 'nl'], speedLimit: [0, 1, 2, 5] };
     if (!ok[k]) throw new Error('Not allowed');
     if (Array.isArray(ok[k]) ? !ok[k].includes(v) : typeof v !== ok[k]) throw new Error('Not allowed');
+    if (k === 'speedLimit') speedLimitMB = v;
+    if (k === 'startWithWindows') {
+      try { app.setLoginItemSettings({ openAtLogin: v, args: ['--hidden'] }); } catch {}
+      if (v && !tray) createTray();
+    }
     const s = readJson(file('settings.json'), {}); s[k] = v; writeJson(file('settings.json'), s);
     return state();
   },
@@ -551,7 +567,7 @@ const CHECKS = {
   },
   devAddVersion: ([o]) => { V.obj(o); V.gameId(o.gameId); V.dir(o.buildDir, 'build folder'); V.version(o.version); V.optStr(o.notes, "what's new", 300); },
   devHide: ([id, hidden]) => { V.gameId(id); V.bool(hidden); },
-  openTrailer: gid, makeShortcut: gid, crashPreview: gid, crashSend: gid, crashDismiss: gid,
+  openTrailer: gid, makeShortcut: gid, moveGame: gid, crashPreview: gid, crashSend: gid, crashDismiss: gid,
   feedback: ([id, vote, text]) => { V.gameId(id); V.oneOf(vote, ['up', 'down'], 'vote'); V.optStr(text, 'text', 2000); },
   devSetTestNotes: ([id, v, text]) => { V.gameId(id); V.version(v); V.str(text, 'what to test', 600); },
   setLaunchArgs: ([id, text]) => { V.gameId(id); V.str(text, 'launch options', 300); },
@@ -609,13 +625,14 @@ function createWindow(hidden) {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html')); // Version 1 look only
-  win.on('close', (e) => { if (developer() && !app.isQuitting) { e.preventDefault(); win.hide(); } });
+  // Developer, or a player who picked "Start with Windows": closing the window keeps it small in the tray.
+  win.on('close', (e) => { if ((developer() || settings().startWithWindows) && !app.isQuitting) { e.preventDefault(); win.hide(); } });
 }
 
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'renderer', 'icon.png'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
-  tray.setToolTip('Zero Launcher (host)');
+  tray.setToolTip(developer() ? 'Zero Launcher (host)' : 'Zero Launcher');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Zero Launcher', click: () => { win.show(); win.focus(); } },
     { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
@@ -653,7 +670,8 @@ else {
     };
     ai = new AiHelper(path.join(DATA(), 'ai-runs'));
     createWindow(process.argv.includes('--hidden'));
-    if (developer()) {
+    speedLimitMB = [0, 1, 2, 5].includes(s.speedLimit) ? s.speedLimit : 0;
+    if (developer() || s.startWithWindows) {
       createTray(); // The website is never started by the launcher (status only).
     }
     await refresh();
@@ -663,5 +681,5 @@ else {
     playFromArgs(process.argv);
     checkKeyBackup();
   });
-  app.on('window-all-closed', () => { if (!developer()) app.quit(); });
+  app.on('window-all-closed', () => { if (!developer() && !settings().startWithWindows) app.quit(); });
 }

@@ -31,7 +31,8 @@
       "package.json"
     ],
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "win": {
       "target": [
@@ -43,7 +44,8 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "ZeroLauncherSetup-${version}.${ext}"
+      "artifactName": "ZeroLauncherSetup-${version}.${ext}",
+      "include": "build/installer.nsh"
     },
     "publish": null
   }
