@@ -157,3 +157,8 @@ td.dl{font-variant-numeric:tabular-nums}
 .bad-text{color:var(--bad)}
 .report-frame{width:100%;height:70vh;border:1px solid var(--line);border-radius:12px;background:#fff}
 .hub-row.grave{opacity:.9}
+.pboxes{align-items:start}
+.pline .path{text-align:left;display:block;margin:2px 0 6px;padding:0;text-indent:0;word-break:break-all}
+button.linkish{background:none;border:0;color:#8fb3ff;padding:6px 0 0;cursor:pointer;font:inherit}button.linkish:hover{text-decoration:underline}
+label.check-inline{flex-direction:row;align-items:center;gap:8px;font-size:14px;color:var(--text,#e6e9ef);cursor:pointer}
+.path.missing-path{color:#ff6b6e;text-decoration:line-through}

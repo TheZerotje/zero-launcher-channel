@@ -56,7 +56,7 @@ function seedList({ hubSeed = { games: [] }, projectsSeed = { projects: [] }, hu
       folders: g.folder ? [g.folder] : [], nextStep: g.nextStep || '', priority: 2, created: asOf,
       waitingOn: g.status === 'ready' || g.status === 'testing' ? 'zero' : 'nobody',
       notes: [g.version ? `Version ${g.version}.` : '', g.status === 'coming-soon' ? 'Coming soon on the website.' : '', g.flag || ''].filter(Boolean).join(' '),
-      ...(g.status === 'scrapped' ? { scrapReason: 'Scrapped before 2 Nov 2026 (from project notes)' } : {}), // no date: not "this week"
+      ...(g.status === 'scrapped' ? { scrapReason: 'Before 2 Nov 2026 (from project notes)' } : {}), // no date: not "this week"
     });
   }
   for (const p of projectsSeed.projects || []) {
@@ -220,7 +220,7 @@ function status(p, ctx = {}) {
   if (p.stage === 'scrapped' && cg && (cg.releases || []).some((r) => r.state === 'released' || r.state === 'testing')) warnings.push('Scrapped – players can still get it. Press Go back on Publish if you want it gone for them.');
   // last change = newest of: folder files, git commit, Zero's own edits
   const last = [changed, p.lastTouched].filter(Boolean).sort().pop() || null;
-  return { facts, folders, warnings, lastChange: last, lastChangeSource: last && last === changed ? changedSrc : 'your last edit' };
+  return { facts, folders, warnings, lastChange: last, lastChangeSource: !last ? null : last === changed ? changedSrc : p.history.length ? 'your last edit' : 'date of the project list' };
 }
 
 // ---------- boxes ----------

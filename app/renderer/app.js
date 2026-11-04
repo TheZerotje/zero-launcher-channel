@@ -421,7 +421,7 @@ function projectRow(p) {
       render(); toast('Saved');
     } }, 'Save'),
     h('button', { class: 'ghost small bad-text', onclick: () => scrapProject(p) }, 'Scrap project')));
-  const folder = (st.folders.find((f) => f.found) || {}).dir || p.folders[0]; // the first folder that is on this PC
+  const found = st.folders.find((f) => f.found); const folder = found && found.dir; // the first folder that is on this PC
   return h('div', { class: 'hub-row', 'data-id': p.id },
     h('div', { class: 'hub-main' },
       h('div', { class: 'row' }, h('b', { class: 'hub-name' }, p.name), h('span', { class: 'kind k-' + p.type }, D.types[p.type]), h('span', { class: 'prio p' + p.priority, title: 'Priority' }, 'P' + p.priority),
@@ -443,16 +443,16 @@ function projectRow(p) {
       p.notes ? h('div', { class: 'dim' }, p.notes) : null,
       edit),
     h('div', { class: 'hub-side' },
-      folder ? h('button', { class: 'ghost small', title: folder, onclick: () => call('devOpenFolder', folder) }, 'Open folder') : h('span', { class: 'dim' }, 'no folder'),
-      p.folders.map((f) => h('span', { class: 'path' }, f)),
-      folder ? h('button', { class: 'ghost small', onclick: () => call('copy', folder).then(() => toast('Path copied')) }, 'Copy path') : null,
+      found ? h('button', { class: 'ghost small', title: folder, onclick: () => call('devOpenFolder', folder) }, 'Open folder') : h('span', { class: 'dim' }, p.folders.length ? 'folder not on this PC' : 'no folder'),
+      st.folders.map((f) => h('span', { class: 'path' + (f.found ? '' : ' missing-path') }, f.dir)),
+      found ? h('button', { class: 'ghost small', onclick: () => call('copy', folder).then(() => toast('Path copied')) }, 'Copy path') : null,
       h('div', { class: 'row' },
         h('button', { class: 'ghost small', onclick: (e) => { const x = e.target.closest('.hub-row').querySelector('.hub-edit'); x.style.display = x.style.display === 'none' ? 'block' : 'none'; } }, 'Edit'),
         p.stage === 'released' ? h('button', { class: 'ghost small', onclick: async () => { projData = await call('devProjectSave', p.id, { needsWork: p.needsWork ? '' : 'needs work' }); render(); } }, p.needsWork ? 'Mark fixed' : 'Needs work') : null)));
 }
-function projBox(title, cls, items, empty, line) {
-  return h('div', { class: 'panel pbox ' + cls }, h('h3', {}, `${title} (${items.length})`), items.length ? items.slice(0, 8).map(line) : h('div', { class: 'dim' }, empty),
-    items.length > 8 ? h('div', { class: 'dim' }, `and ${items.length - 8} more`) : null);
+function projBox(title, cls, items, empty, line, more) {
+  return h('div', { class: 'panel pbox ' + cls }, h('h3', {}, `${title} (${items.length})`), items.length ? items.slice(0, 5).map(line) : h('div', { class: 'dim' }, empty),
+    items.length > 5 ? h('button', { class: 'linkish', onclick: more || null }, `and ${items.length - 5} more`) : null);
 }
 const jumpTo = (id) => { projFilter = { ...projFilter, q: '', stage: '', type: '', waitingOn: '', priority: '', showReleased: true }; render(); setTimeout(() => { const r = document.querySelector(`.hub-row[data-id="${id}"]`); if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('flash'); } }, 50); };
 P['dev-hub'] = () => {
@@ -475,7 +475,8 @@ P['dev-hub'] = () => {
     D.siteError ? h('div', { class: 'err' }, D.siteError) : null,
     h('div', { class: 'pboxes' },
       projBox("Don't forget", 'forget', D.dontForget, 'Nothing forgotten. Nice!', (x) => h('div', { class: 'pline clickable', onclick: () => jumpTo(x.id) }, h('b', {}, x.name), h('span', { class: 'days' }, ` ${x.days} days`), x.nextStep ? h('div', { class: 'dim' }, 'Next: ' + x.nextStep) : null)),
-      projBox('Waiting on you', 'waiting', D.waiting, 'Nothing waits on you.', (x) => h('div', { class: 'pline clickable', onclick: () => jumpTo(x.id) }, h('b', {}, x.name), x.nextStep ? h('div', { class: 'dim' }, x.nextStep) : null)),
+      projBox('Waiting on you', 'waiting', D.waiting, 'Nothing waits on you.', (x) => h('div', { class: 'pline clickable', onclick: () => jumpTo(x.id) }, h('b', {}, x.name), x.nextStep ? h('div', { class: 'dim' }, x.nextStep) : null),
+        () => { projFilter = { ...projFilter, waitingOn: 'zero', q: '' }; render(); document.querySelector('.hub-group')?.scrollIntoView(); }),
       projBox('New folder found', 'newf', D.newFolders, 'No new folders on E:\\ or F:\\.', (x) => h('div', { class: 'pline' }, h('b', {}, x.name), h('div', { class: 'dim path' }, x.path),
         h('div', { class: 'row' },
           h('button', { class: 'ghost small', onclick: async () => { const r = await call('devProjectAdd', { name: x.name, type: 'other', folder: x.path }); projData = r.view; render(); toast('Added. Press Edit to set the type and stage.'); } }, 'Add as project'),
@@ -483,7 +484,7 @@ P['dev-hub'] = () => {
     search,
     h('div', { class: 'row tools' }, sel('type', 'All types', D.types), sel('stage', 'All stages', Object.fromEntries(Object.entries(D.stages).filter(([k]) => k !== 'scrapped'))),
       sel('waitingOn', 'Waiting on anyone', D.waitingOn), sel('priority', 'Any priority', { 1: 'Priority 1', 2: 'Priority 2', 3: 'Priority 3' }),
-      h('label', { class: 'row' }, h('input', { type: 'checkbox', checked: projFilter.showReleased, onchange: (e) => { projFilter.showReleased = e.target.checked; render(); } }), 'Show released'),
+      h('label', { class: 'check-inline' }, h('input', { type: 'checkbox', checked: projFilter.showReleased, onchange: (e) => { projFilter.showReleased = e.target.checked; render(); } }), 'Show released'),
       h('button', { class: 'ghost small', onclick: () => {
         const input = h('input', { id: 'new-proj', placeholder: 'Project name', maxlength: 80, style: 'width:100%' });
         modal('New project', input, [['Cancel', 'ghost', () => true], ['Add', 'btn', async () => {
